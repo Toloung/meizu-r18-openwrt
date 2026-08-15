@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2.1 Ethernet Fix + WiFi Debug
+name: Meizu R18 Stage 2.2 Reboot Fix + Chinese LuCI
 
 on:
   workflow_dispatch:
@@ -27,15 +27,40 @@ jobs:
       - name: Clone OpenWrt v25.12.5 and apply R18 board patch
         run: |
           git clone --depth 1 --branch v25.12.5 https://github.com/openwrt/openwrt.git openwrt
+          git -C openwrt apply --check ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           git -C openwrt apply ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
+          git -C openwrt diff --check
 
-      - name: Configure feeds and Stage 2.1 Ethernet Fix initramfs
+      - name: Check Stage 2.2 source assertions
+        run: |
+          set -eu
+          network=openwrt/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
+          rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
+          worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
+          image=openwrt/target/linux/ramips/image/mt76x8.mk
+          grep -A5 -F 'meizu,r18)' "$network" | grep -F '"1:lan:1" "3:lan:2" "4:wan" "6@eth0"'
+          test -f "$rescue"
+          test -f "$worker"
+          grep -F 'START=99' "$rescue"
+          grep -F 'USE_PROCD=1' "$rescue"
+          grep -F 'sleep 60' "$worker"
+          grep -F 'R18-OpenWrt-Test' openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+          grep -F "network='lan'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+          grep -F "luci.main.lang='zh_cn'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+          grep -F 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+          ! grep -E '^  IMAGE/recovery\.bin .*append-metadata' "$image"
+
+      - name: Configure feeds and Stage 2.2 initramfs
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cp ../configs/r18-initramfs.config .config
           make defconfig
+          grep -Fx 'CONFIG_PACKAGE_luci=y' .config
+          grep -Fx 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config
+          grep -Fx 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' .config
+          grep -Fx 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' .config
 
       - name: Inject private 2.4 GHz test PSK
         env:
@@ -57,20 +82,27 @@ jobs:
           set -o pipefail
           make -j"$(nproc)" V=s 2>&1 | tee ../kernel-build.log
 
-      - name: Create checksums and recovery candidate
+      - name: Verify images and create checksums
         if: always()
         run: |
+          set -eu
           mkdir -p artifacts
-          find openwrt/bin/targets -type f \( -iname '*meizu*r18*initramfs*' -o -iname '*meizu*r18*sysupgrade*' -o -iname '*meizu*r18*recovery*' \) -exec cp {} artifacts/ \; || true
-          find artifacts -maxdepth 1 -type f -iname '*meizu*r18*recovery.bin' -exec cp {} artifacts/meizu_r18.bin \; || true
+          initramfs=$(find openwrt/bin/targets -type f -iname '*meizu*r18*initramfs-kernel.bin' -print -quit)
+          sysupgrade=$(find openwrt/bin/targets -type f -iname '*meizu*r18*squashfs-sysupgrade.bin' -print -quit)
+          recovery=$(find openwrt/bin/targets -type f -iname '*meizu*r18*squashfs-recovery.bin' -print -quit)
+          test -n "$initramfs" && test -n "$sysupgrade" && test -n "$recovery"
+          cp "$initramfs" "$sysupgrade" "$recovery" artifacts/
+          cp "$recovery" artifacts/meizu_r18.bin
+          grep -a -q $'\xde\xad\xc0\xde' "$recovery"
+          test "$(sha256sum "$recovery" | awk '{print $1}')" = "$(sha256sum artifacts/meizu_r18.bin | awk '{print $1}')"
           cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
-          printf '%s\n' 'Stage 2.1 Ethernet Fix + WiFi Debug: meizu_r18.bin is a static recovery candidate only; do not use WPS/TFTP recovery or flash it without separately authorised validation.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Stage 2.2 Reboot Fix + Chinese LuCI: meizu_r18.bin is a static recovery candidate only; do not use WPS/TFTP recovery or flash it without separately authorised validation.' > artifacts/NOT-FOR-FLASHING.txt
           cd artifacts
           sha256sum * .config > sha256sums 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: meizu-r18-stage2.1-ethernet-fix-wifi-debug
+          name: meizu-r18-stage2.2-reboot-fix-chinese-luci
           path: artifacts/

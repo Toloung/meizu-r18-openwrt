@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2 initramfs
+name: Meizu R18 Stage 2.1 Ethernet Fix + WiFi Debug
 
 on:
   workflow_dispatch:
@@ -29,13 +29,23 @@ jobs:
           git clone --depth 1 --branch v25.12.5 https://github.com/openwrt/openwrt.git openwrt
           git -C openwrt apply ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
 
-      - name: Configure feeds and Stage 2 initramfs
+      - name: Configure feeds and Stage 2.1 Ethernet Fix initramfs
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cp ../configs/r18-initramfs.config .config
           make defconfig
+
+      - name: Inject private 2.4 GHz test PSK
+        env:
+          R18_WIFI_TEST_PSK: ${{ secrets.R18_WIFI_TEST_PSK }}
+        run: |
+          test -n "$R18_WIFI_TEST_PSK" || { echo 'R18_WIFI_TEST_PSK secret is required'; exit 1; }
+          test "${#R18_WIFI_TEST_PSK}" -ge 8 || { echo 'R18_WIFI_TEST_PSK must be at least 8 characters'; exit 1; }
+          install -d -m 0755 openwrt/files/etc
+          umask 077
+          printf '%s\n' "$R18_WIFI_TEST_PSK" > openwrt/files/etc/r18-wifi-test-psk
 
       - name: Download sources
         working-directory: openwrt
@@ -47,19 +57,20 @@ jobs:
           set -o pipefail
           make -j"$(nproc)" V=s 2>&1 | tee ../kernel-build.log
 
-      - name: Create checksums and flashing warning
+      - name: Create checksums and recovery candidate
         if: always()
         run: |
           mkdir -p artifacts
-          find openwrt/bin/targets -type f \( -iname '*meizu*r18*initramfs*' -o -iname '*meizu*r18*sysupgrade*' \) -exec cp {} artifacts/ \; || true
+          find openwrt/bin/targets -type f \( -iname '*meizu*r18*initramfs*' -o -iname '*meizu*r18*sysupgrade*' -o -iname '*meizu*r18*recovery*' \) -exec cp {} artifacts/ \; || true
+          find artifacts -maxdepth 1 -type f -iname '*meizu*r18*recovery.bin' -exec cp {} artifacts/meizu_r18.bin \; || true
           cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
-          printf '%s\n' 'DO NOT FLASH: any sysupgrade artifact is static-check only.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Stage 2.1 Ethernet Fix + WiFi Debug: meizu_r18.bin is a static recovery candidate only; do not use WPS/TFTP recovery or flash it without separately authorised validation.' > artifacts/NOT-FOR-FLASHING.txt
           cd artifacts
           sha256sum * .config > sha256sums 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: meizu-r18-stage2-initramfs-and-static-checks
+          name: meizu-r18-stage2.1-ethernet-fix-wifi-debug
           path: artifacts/

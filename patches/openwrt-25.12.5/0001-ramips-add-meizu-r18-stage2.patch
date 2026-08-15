@@ -118,9 +118,9 @@ index 0000000..de3eed3
 +};
 +
 +&esw {
-+	/* LAN1=P1, LAN2=P3. WAN=P4 is therefore not in the LAN bitmap. */
++	/* Driver-level physical topology. Network roles are set in 02_network. */
 +	mediatek,portmap = <0x0a>;
-+	/* P0 and P2 have no physical R18 connector. CPU is P6. */
++	/* P0 and P2 have no physical R18 connector; CPU is P6/eth0. */
 +	mediatek,portdisable = <0x05>;
 +};
 +
@@ -143,11 +143,78 @@ index 0000000..de3eed3
 +		nvmem-cell-names = "eeprom", "mac-address";
 +	};
 +};
+diff --git a/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+new file mode 100644
+index 0000000..c0ffee0
+--- /dev/null
++++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+@@ -0,0 +1,34 @@
++#!/bin/sh
++# First boot only. CI supplies the PSK in an image overlay; never store it in
++# the public board patch. The boot sequence runs wifi config before this.
++
++psk_file=/etc/r18-wifi-test-psk
++[ -r "$psk_file" ] || {
++	logger -t r18-wifi-test 'No private PSK supplied; leaving Wi-Fi disabled.'
++	exit 0
++}
++
++psk="$(cat "$psk_file")"
++rm -f "$psk_file"
++
++[ "${#psk}" -ge 8 ] || {
++	logger -t r18-wifi-test 'Invalid private PSK; leaving Wi-Fi disabled.'
++	exit 0
++}
++
++for radio in $(uci show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-device$/\1/p'); do
++	[ "$(uci -q get "wireless.$radio.band")" = '2g' ] || continue
++
++	uci set "wireless.$radio.disabled=0"
++	uci -q delete wireless.r18_24g
++	uci set wireless.r18_24g='wifi-iface'
++	uci set wireless.r18_24g.device="$radio"
++	uci set wireless.r18_24g.mode='ap'
++	uci set wireless.r18_24g.network='lan'
++	uci set wireless.r18_24g.ssid='R18-OpenWrt-Test'
++	uci set wireless.r18_24g.encryption='psk2'
++	uci set wireless.r18_24g.key="$psk"
++done
++
++uci commit wireless
++exit 0
+diff --git a/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network b/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
+index fbd21f5..1d15fad 100644
+--- a/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
++++ b/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
+@@ -176,6 +176,12 @@ ramips_setup_interfaces()
+ 			"2:lan" "3:lan" "6@eth0"
+ 		ucidef_set_interface_wan "eth1"
+ 		;;
++	meizu,r18)
++		# R18: LAN1=P1, LAN2=P3, WAN=P4, CPU=P6/eth0.
++		# Do not derive network roles from the DTS portmap alone.
++		ucidef_add_switch "switch0" \
++			"1:lan:1" "3:lan:2" "4:wan" "6@eth0"
++		;;
+ 	netgear,r6020|\
+ 	netgear,r6080|\
+ 	netgear,r6120|\
+@@ -287,7 +293,8 @@ ramips_setup_macs()
+ 	hiwifi,hc5611|\
+ 	hiwifi,hc5661a|\
+ 	hiwifi,hc5761a|\
+-	hiwifi,hc5861b)
++	hiwifi,hc5861b|\
++	meizu,r18)
+ 		wan_mac=$(macaddr_add "$(cat /sys/class/net/eth0/address)" 1)
+ 		;;
+ 	cudy,wr1000|\
 diff --git a/target/linux/ramips/image/mt76x8.mk b/target/linux/ramips/image/mt76x8.mk
-index 96b3aeb..5a48698 100644
+index 96b3aeb..2768399 100644
 --- a/target/linux/ramips/image/mt76x8.mk
 +++ b/target/linux/ramips/image/mt76x8.mk
-@@ -104,6 +104,15 @@ define Device/asus_rt-ac1200-v2
+@@ -104,6 +104,21 @@ define Device/asus_rt-ac1200-v2
  endef
  TARGET_DEVICES += asus_rt-ac1200-v2
  
@@ -155,8 +222,14 @@ index 96b3aeb..5a48698 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci
++  DEVICE_VARIANT := Stage 2.1 Ethernet Fix
++  DEVICE_PACKAGES := kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
++  # Stage 2.1: no sysupgrade metadata.  This is a static recovery candidate,
++  # not authorisation to use WPS/TFTP recovery or to flash the device.
++  IMAGES += recovery.bin
++  IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | check-size
++  IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size
 +endef
 +TARGET_DEVICES += meizu_r18
 +

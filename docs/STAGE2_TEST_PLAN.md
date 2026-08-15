@@ -11,6 +11,14 @@ or Storage. Keep a verified original SPI backup offline.
 Any `sysupgrade.bin` produced alongside it is **DO NOT FLASH / NOT FOR
 FLASHING YET** and is retained only for static image-format inspection.
 
+## Stage 2.5 WPS-recovery exclusion
+
+Do not use WPS + power recovery for this plan. The mtd0 analysis proves that
+menu 2 is a persistent erase/write path from `0x50000`, with an accepted
+length large enough to reach Storage; the WPS-to-menu linkage is still
+unproven. It is therefore outside the permitted RAM-only route. See
+`docs/R18_RECOVERY_MAP.md`.
+
 ## Before powering the board
 
 1. Attach a 3.3 V TTL adapter with a common ground; do not connect a 5 V UART.

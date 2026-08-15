@@ -1,0 +1,39 @@
+# Full OpenWrt source tree
+openwrt/
+
+# Firmware / extracted binary research
+firmware/
+extracted/
+analysis/
+reference/
+references/
+
+# Device-specific backups and dumps
+*.bin
+*.img
+*.dump
+*.rom
+
+# Private router backups
+R18_Backup*/
+*fullflash*
+
+# Build outputs
+bin/
+build_dir/
+staging_dir/
+tmp/
+dl/
+logs/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

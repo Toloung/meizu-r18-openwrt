@@ -1,0 +1,165 @@
+diff --git a/target/linux/ramips/dts/mt7628an_meizu_r18.dts b/target/linux/ramips/dts/mt7628an_meizu_r18.dts
+new file mode 100644
+index 0000000..de3eed3
+--- /dev/null
++++ b/target/linux/ramips/dts/mt7628an_meizu_r18.dts
+@@ -0,0 +1,139 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/dts-v1/;
++
++#include "mt7628an.dtsi"
++
++/*
++ * Meizu R18 / Meizu Router Speed Edition
++ *
++ * Stage 2 board support is intentionally RAM-boot-first.  Do not infer GPIO
++ * polarity or assign Factory +0xe000 to Ethernet until this is verified on
++ * hardware; only calibration and MAC locations established by live evidence
++ * are used below.
++ */
++
++/ {
++	compatible = "meizu,r18", "mediatek,mt7628an-soc";
++	model = "Meizu R18";
++
++	chosen {
++		/* Confirmed Linux console setting; U-Boot baud remains unverified. */
++		bootargs = "console=ttyS0,57600";
++	};
++};
++
++&state_default {
++	gpio {
++		/* GPIO43 reset and GPIO4 power LED are deliberately not claimed here:
++		 * their electrical polarities are not yet verified. */
++		groups = "gpio", "p0led_an", "p1led_an", "p2led_an", "p3led_an",
++			 "p4led_an", "refclk", "wdt", "wled_an";
++		function = "gpio";
++	};
++};
++
++&spi0 {
++	status = "okay";
++
++	flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		/* TODO: the R18 maximum is unverified; retain a conservative test rate. */
++		spi-max-frequency = <12000000>;
++
++		partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "bootloader";
++				reg = <0x000000 0x030000>;
++				read-only;
++			};
++
++			partition@30000 {
++				label = "config";
++				reg = <0x030000 0x010000>;
++				read-only;
++			};
++
++			partition@40000 {
++				label = "factory";
++				reg = <0x040000 0x010000>;
++				read-only;
++
++				nvmem-layout {
++					compatible = "fixed-layout";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					eeprom_factory_0: eeprom@0 {
++						reg = <0x0000 0x0400>;
++					};
++
++					macaddr_factory_4: macaddr@4 {
++						reg = <0x0004 0x0006>;
++					};
++
++					macaddr_factory_28: macaddr@28 {
++						reg = <0x0028 0x0006>;
++					};
++
++					eeprom_factory_8000: eeprom@8000 {
++						reg = <0x8000 0x0200>;
++					};
++
++					macaddr_factory_8004: macaddr@8004 {
++						reg = <0x8004 0x0006>;
++					};
++				};
++			};
++
++			partition@50000 {
++				compatible = "denx,uimage";
++				label = "firmware";
++				reg = <0x050000 0xF00000>;
++			};
++
++			partition@f50000 {
++				label = "storage";
++				reg = <0xF50000 0x0B0000>;
++				read-only;
++			};
++		};
++	};
++};
++
++&ethernet {
++	/* Factory +0x0028 is the live Padavan LAN MAC source. */
++	nvmem-cells = <&macaddr_factory_28>;
++	nvmem-cell-names = "mac-address";
++};
++
++&esw {
++	/* LAN1=P1, LAN2=P3. WAN=P4 is therefore not in the LAN bitmap. */
++	mediatek,portmap = <0x0a>;
++	/* P0 and P2 have no physical R18 connector. CPU is P6. */
++	mediatek,portdisable = <0x05>;
++};
++
++&wmac {
++	status = "okay";
++	nvmem-cells = <&eeprom_factory_0>, <&macaddr_factory_4>;
++	nvmem-cell-names = "eeprom", "mac-address";
++};
++
++&pcie {
++	status = "okay";
++};
++
++&pcie0 {
++	wifi@0,0 {
++		compatible = "mediatek,mt76";
++		reg = <0x0000 0 0 0 0>;
++		ieee80211-freq-limit = <5000000 6000000>;
++		nvmem-cells = <&eeprom_factory_8000>, <&macaddr_factory_8004>;
++		nvmem-cell-names = "eeprom", "mac-address";
++	};
++};
+diff --git a/target/linux/ramips/image/mt76x8.mk b/target/linux/ramips/image/mt76x8.mk
+index 96b3aeb..5a48698 100644
+--- a/target/linux/ramips/image/mt76x8.mk
++++ b/target/linux/ramips/image/mt76x8.mk
+@@ -104,6 +104,15 @@ define Device/asus_rt-ac1200-v2
+ endef
+ TARGET_DEVICES += asus_rt-ac1200-v2
+ 
++define Device/meizu_r18
++  IMAGE_SIZE := 15360k
++  DEVICE_VENDOR := Meizu
++  DEVICE_MODEL := R18
++  DEVICE_PACKAGES := kmod-mt76x2 kmod-usb2 kmod-usb-ohci
++  SUPPORTED_DEVICES += meizu,r18
++endef
++TARGET_DEVICES += meizu_r18
++
+ define Device/asus_rt-n10p-v3
+   IMAGE_SIZE := 7872k
+   DEVICE_VENDOR := ASUS

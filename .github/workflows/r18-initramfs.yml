@@ -53,14 +53,47 @@ jobs:
       - name: Configure feeds and Stage 2.2 initramfs
         working-directory: openwrt
         run: |
+          set -eu
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          echo "===== LuCI feed package search ====="
+          for package in \
+            luci-i18n-base-zh-cn \
+            luci-app-firewall \
+            luci-i18n-firewall-zh-cn \
+            luci-app-package-manager \
+            luci-i18n-package-manager-zh-cn
+          do
+            if ! result="$(./scripts/feeds search "$package")"; then
+              echo "::error::LuCI feed search failed for $package"
+              exit 1
+            fi
+            printf '%s\n' "$result"
+            printf '%s\n' "$result" | grep -F "$package" >/dev/null || {
+              echo "::error::LuCI feed package $package does not exist in OpenWrt v25.12.5"
+              exit 1
+            }
+          done
+          echo "===== End LuCI feed package search ====="
           cp ../configs/r18-initramfs.config .config
           make defconfig
-          grep -Fx 'CONFIG_PACKAGE_luci=y' .config
-          grep -Fx 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' .config
-          grep -Fx 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' .config
-          grep -Fx 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' .config
+          echo "===== LuCI config after defconfig ====="
+          grep -E '^CONFIG_(PACKAGE_luci|LUCI_LANG_zh_Hans)|^# CONFIG_(PACKAGE_luci|LUCI_LANG_zh_Hans)' .config | \
+            grep -E '(^CONFIG_PACKAGE_luci=y$|LUCI_LANG_zh_Hans|app-firewall|app-package-manager|base-zh-cn|firewall-zh-cn|package-manager-zh-cn)' || true
+          echo "===== End LuCI config ====="
+          require_luci_config() {
+            if ! grep -Fx "$1" .config; then
+              echo "::error::$2 was dropped by make defconfig"
+              exit 1
+            fi
+          }
+          require_luci_config 'CONFIG_LUCI_LANG_zh_Hans=y' 'LUCI_LANG_zh_Hans'
+          require_luci_config 'CONFIG_PACKAGE_luci=y' 'luci'
+          require_luci_config 'CONFIG_PACKAGE_luci-app-firewall=y' 'luci-app-firewall'
+          require_luci_config 'CONFIG_PACKAGE_luci-app-package-manager=y' 'luci-app-package-manager'
+          require_luci_config 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' 'luci-i18n-base-zh-cn'
+          require_luci_config 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' 'luci-i18n-firewall-zh-cn'
+          require_luci_config 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' 'luci-i18n-package-manager-zh-cn'
 
       - name: Inject private 2.4 GHz test PSK
         env:
@@ -79,7 +112,7 @@ jobs:
       - name: Build
         working-directory: openwrt
         run: |
-          set -o pipefail
+          set -euo pipefail
           make -j"$(nproc)" V=s 2>&1 | tee ../kernel-build.log
 
       - name: Verify images and create checksums
@@ -87,10 +120,16 @@ jobs:
         run: |
           set -eu
           mkdir -p artifacts
+          test -d openwrt/bin/targets || {
+            echo '::error::OpenWrt build output directory does not exist'
+            exit 1
+          }
           initramfs=$(find openwrt/bin/targets -type f -iname '*meizu*r18*initramfs-kernel.bin' -print -quit)
           sysupgrade=$(find openwrt/bin/targets -type f -iname '*meizu*r18*squashfs-sysupgrade.bin' -print -quit)
           recovery=$(find openwrt/bin/targets -type f -iname '*meizu*r18*squashfs-recovery.bin' -print -quit)
-          test -n "$initramfs" && test -n "$sysupgrade" && test -n "$recovery"
+          test -n "$initramfs" || { echo '::error::Missing R18 initramfs-kernel.bin'; exit 1; }
+          test -n "$sysupgrade" || { echo '::error::Missing R18 squashfs-sysupgrade.bin'; exit 1; }
+          test -n "$recovery" || { echo '::error::Missing R18 squashfs-recovery.bin'; exit 1; }
           cp "$initramfs" "$sysupgrade" "$recovery" artifacts/
           cp "$recovery" artifacts/meizu_r18.bin
           grep -a -q $'\xde\xad\xc0\xde' "$recovery"

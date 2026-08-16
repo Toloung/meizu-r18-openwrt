@@ -43,3 +43,13 @@ The one-time defaults script sets `luci.main.lang=zh_cn`. The image includes
 `luci`, Bootstrap (default), and the Base, Firewall, and Package Manager
 simplified-Chinese language packages. 2.4 GHz remains the secret-protected
 debug AP on `lan`; 5 GHz remains disabled.
+
+For the LuCI feed commit pinned by OpenWrt v25.12.5, the translation packages
+are `luci-i18n-base-zh-cn`, `luci-i18n-firewall-zh-cn`, and
+`luci-i18n-package-manager-zh-cn`. The latter two are paired explicitly with
+`luci-app-firewall` and `luci-app-package-manager` in the R18 configuration.
+`CONFIG_LUCI_LANG_zh_Hans=y` is also explicit because `zh_Hans` is the feed's
+source locale for the `zh-cn` package alias.
+CI verifies those package names immediately after feeds installation, prints the
+post-defconfig LuCI symbols, and reports the exact missing symbol instead of
+failing through an unexplained `grep` exit status.

@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2.3 Clean Recovery / JFFS2 Residual Test
+name: Meizu R18 Stage 2.4 - Fix S25FL128S1 256-byte page programming
 
 on:
   workflow_dispatch:
@@ -42,13 +42,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-dl-v1-
 
-      - name: Check Stage 2.3 source assertions
+      - name: Check Stage 2.4 source assertions
         run: |
           set -eu
           network=openwrt/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
           worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
           image=openwrt/target/linux/ramips/image/mt76x8.mk
+          spi_nor_patch=openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch
           grep -A5 -F 'meizu,r18)' "$network" | grep -F '"1:lan:1" "3:lan:2" "4:wan" "6@eth0"'
           test -f "$rescue"
           test -f "$worker"
@@ -62,8 +63,14 @@ jobs:
           grep -F 'define Build/r18-pad-to-ff' "$image"
           ! grep -E '^  IMAGE/recovery\.bin .*append-metadata' "$image"
           grep -F 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+          test -f "$spi_nor_patch"
+          grep -F 's25fl128s1_post_bfpt_fixups' "$spi_nor_patch"
+          grep -F 'nor->params->page_size = 256;' "$spi_nor_patch"
+          grep -F 'SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x01, 0x80)' "$spi_nor_patch"
+          grep -F '.fixups = &s25fl128s1_fixups,' "$spi_nor_patch"
+          ! grep -F '.fixups = &s25fs_s_nor_fixups,' "$spi_nor_patch"
 
-      - name: Configure feeds and Stage 2.3 initramfs
+      - name: Configure feeds and Stage 2.4 initramfs
         working-directory: openwrt
         run: |
           set -eu
@@ -141,6 +148,19 @@ jobs:
           echo "===== ccache status after build ====="
           ccache -s || true
 
+      - name: Verify prepared S25FL128S1 kernel fixup
+        run: |
+          set -eu
+          spansion=$(find openwrt/build_dir -type f -path '*/drivers/mtd/spi-nor/spansion.c' -print -quit)
+          test -n "$spansion" || {
+            echo '::error::Prepared Linux spansion.c was not found after the OpenWrt build'
+            exit 1
+          }
+          grep -F 's25fl128s1_post_bfpt_fixups' "$spansion"
+          grep -F 'nor->params->page_size = 256;' "$spansion"
+          grep -F 'SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x01, 0x80)' "$spansion"
+          grep -F '.fixups = &s25fl128s1_fixups,' "$spansion"
+
       - name: Verify images and create checksums
         if: always()
         run: |
@@ -170,12 +190,12 @@ jobs:
           test "$(sha256sum "$recovery" | awk '{print $1}')" = "$(sha256sum artifacts/meizu_r18.bin | awk '{print $1}')"
           cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
-          printf '%s\n' 'Stage 2.3 Clean Recovery / JFFS2 Residual Test: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Stage 2.4 - Fix S25FL128S1 256-byte page programming: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
           cd artifacts
           sha256sum * .config > sha256sums 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: meizu-r18-stage2.3-clean-recovery-jffs2-residual-test
+          name: meizu-r18-stage2.4-s25fl128s1-page-size-fix
           path: artifacts/

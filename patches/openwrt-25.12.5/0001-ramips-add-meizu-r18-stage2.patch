@@ -304,7 +304,7 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 2.3 Clean Recovery / JFFS2 Residual Test
++  DEVICE_VARIANT := Stage 2.4 Fix S25FL128S1 256-byte page programming
 +  DEVICE_PACKAGES := kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
 +  # Recovery is the only full-firmware artifact.  It intentionally has no
@@ -339,3 +339,40 @@ index 96b3aeb..2768399 100644
  define Device/asus_rt-n10p-v3
    IMAGE_SIZE := 7872k
    DEVICE_VENDOR := ASUS
+diff --git a/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch b/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch
+new file mode 100644
+index 0000000..c4c6e1d
+--- /dev/null
++++ b/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch
+@@ -0,0 +1,31 @@
++--- a/drivers/mtd/spi-nor/spansion.c
+++++ b/drivers/mtd/spi-nor/spansion.c
++@@ -792,3 +792,20 @@ static const struct flash_info spansion_nor_parts[] = {
+++static int s25fl128s1_post_bfpt_fixups(struct spi_nor *nor,
+++				       const struct sfdp_parameter_header *bfpt_header,
+++				       const struct sfdp_bfpt *bfpt)
+++{
+++	/*
+++	 * This exact JEDEC variant advertises 512-byte pages in BFPT, but
+++	 * Page Program wraps at the safe 256-byte boundary.
+++	 */
+++	nor->params->page_size = 256;
+++
+++	return 0;
+++}
+++
+++static const struct spi_nor_fixups s25fl128s1_fixups = {
+++	.post_bfpt = s25fl128s1_post_bfpt_fixups,
+++};
+++
++ static const struct flash_info spansion_nor_parts[] = {
++ 	{
++ 		.id = SNOR_ID(0x01, 0x02, 0x12),
++@@ -889,6 +903,7 @@ static const struct flash_info spansion_nor_parts[] = {
++ 		.name = "s25fl128s1",
++ 		.size = SZ_16M,
++ 		.no_sfdp_flags = SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
++ 		.mfr_flags = USE_CLSR,
+++		.fixups = &s25fl128s1_fixups,
++ 	}, {
++ 		.id = SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x01, 0x81),

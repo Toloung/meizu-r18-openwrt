@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2.4 - Fix S25FL128S1 256-byte page programming
+name: Meizu R18 Stage 2.5 - Disable Automatic Network Rescue
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
       - 'patches/openwrt-25.12.5/**'
       - 'scripts/verify_r18_recovery.py'
       - 'scripts/verify_r18_stage24.py'
+      - 'scripts/verify_r18_stage25.py'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -25,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang flex bison g++ gawk \
             ccache gcc-multilib gettext git libncurses5-dev libssl-dev python3 \
-            python3-setuptools rsync unzip zlib1g-dev file wget patch
+            python3-setuptools rsync unzip zlib1g-dev file wget patch squashfs-tools
 
       - name: Prepare OpenWrt 25.12.5
         run: |
@@ -105,6 +106,31 @@ jobs:
           check_fixed 'r18 pad-to-FF image helper' 'define Build/r18-pad-to-ff' "$image"
           check_absent 'recovery image must not contain sysupgrade metadata' '^  IMAGE/recovery\.bin .*append-metadata' "$image"
           check_fixed 'compact sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+
+      - name: Verify Stage 2.5 rescue and healthcheck source
+        run: |
+          set -eu
+          rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
+          disable=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/98-r18-net-rescue-disable
+          health=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
+          build_info=openwrt/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
+          for file in "$rescue" "$disable" "$health" "$build_info"; do
+            test -f "$file" || { echo "::error::Missing Stage 2.5 file: $file"; exit 1; }
+          done
+          test -x "$rescue" || { echo "::error::r18-net-rescue is not executable"; exit 1; }
+          test -x "$health" || { echo "::error::r18-healthcheck is not executable"; exit 1; }
+          sh -n "$rescue"
+          sh -n "$disable"
+          sh -n "$health"
+          grep -Fq '/etc/init.d/r18-net-rescue disable' "$disable" || {
+            echo '::error::Stage 2.5 rescue disable hook is missing'
+            exit 1
+          }
+          if grep -Fq 'S99r18-net-rescue' ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch; then
+            echo '::error::Stage patch must not create an S99 r18-net-rescue link'
+            exit 1
+          fi
+          echo '[PASS] Stage 2.5 rescue defaults and healthcheck shell syntax'
 
       - name: Prepare build configuration
         working-directory: openwrt
@@ -190,6 +216,14 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
+      - name: Verify Stage 2.5 source and no-fuzz kernel patch
+        run: |
+          set -eu
+          python3 scripts/verify_r18_stage25.py \
+            --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
+            --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
+
       - name: Build firmware
         working-directory: openwrt
         run: |
@@ -249,9 +283,12 @@ jobs:
             exit 1
           }
           echo '[PASS] meizu_r18.bin exactly matches recovery image'
-          cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
-          printf '%s\n' 'Stage 2.4 - Fix S25FL128S1 256-byte page programming: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
+          python3 scripts/verify_r18_stage25.py \
+            --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
+            --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --recovery "$recovery"
+          printf '%s\n' 'Stage 2.5 - Disable Automatic Network Rescue: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
 
       - name: Generate build metadata
         run: |
@@ -266,7 +303,7 @@ jobs:
           )
           {
             echo 'Project: Meizu R18 OpenWrt'
-            echo 'Stage: 2.4'
+            echo 'Stage: 2.5'
             echo 'OpenWrt: 25.12.5'
             echo 'Kernel: 6.12.94'
             echo 'Target: ramips/mt76x8'
@@ -279,13 +316,22 @@ jobs:
             echo 'SPI NOR:'
             echo '  part: s25fl128s1'
             echo '  JEDEC: 01 20 18 4d 01 80'
-            echo '  Stage 2.4 page size fix: 256 bytes'
+            echo '  page size fix: 256 bytes (Stage 2.4, hardware validated)'
+            echo
+            echo 'Network rescue:'
+            echo '  autostart: disabled'
+            echo '  manual service: retained'
             echo
             echo 'Recovery:'
             echo '  expected size: 15728640'
             echo '  firmware range: 0x050000-0xF50000'
             echo '  rootfs_data marker: DE AD C0 DE'
             echo '  FF suffix verification: PASS'
+            echo
+            echo 'Reference hardware validation status:'
+            echo '  Stage 2.4 hardware validation: PASS'
+            echo '  Stage 2.4 persistence validation: PASS'
+            echo '  Note: these are reference hardware results; CI does not perform hardware validation.'
             echo
             echo 'Images (SHA256):'
             cat artifacts/SHA256SUMS
@@ -297,5 +343,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: meizu-r18-stage2.4-s25fl128s1-page-size-fix
+          name: meizu-r18-stage2.5-disable-auto-net-rescue
           path: artifacts/

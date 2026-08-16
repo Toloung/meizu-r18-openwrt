@@ -97,9 +97,14 @@ def verify_generated_patch(kernel_patch: Path) -> str:
 
 def run_patch(command: list[str], description: str) -> None:
     result = subprocess.run(command, text=True, capture_output=True, check=False)
+    details = (result.stdout + result.stderr).strip()
     if result.returncode:
-        details = (result.stdout + result.stderr).strip()
         fail(f"{description} failed (exit {result.returncode}): {details or 'no patch output'}")
+    normalized = details.lower()
+    require(
+        "fuzz" not in normalized and "offset" not in normalized,
+        f"{description} applied with prohibited fuzz or offset: {details or 'no patch output'}",
+    )
 
 
 def find_tar_member(archive: tarfile.TarFile) -> tarfile.TarInfo:

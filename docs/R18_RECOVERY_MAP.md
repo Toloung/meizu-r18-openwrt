@@ -7,6 +7,7 @@
 | 菜单 2 写入性质 | CONFIRMED | 对齐擦除、写入、读回比较。 |
 | 菜单 2 最大长度 | CONFIRMED | 当前 16 MiB SPI 为 `0xfb0000`。 |
 | 菜单 2 范围 | CONFIRMED | 从 `0x50000` 至按擦除块向上取整后的结束位置，最大可到 `0x1000000`。 |
+| Stage 2.3 clean recovery 边界 | BUILD/CI ASSERTED，硬件未验证 | `0xf00000` 字节从 `0x50000` 写入，结束于 `0xf50000`，恰为 Storage 起点；不得推论为 WPS 路径已验证安全。 |
 | Bootloader / Config / Factory | CONFIRMED（菜单 2） | 位于 `0x50000` 前，菜单 2 固定起点不会触及。 |
 | Storage | CONFIRMED（菜单 2 无保护） | 大于 `0xf00000` 的下载会越过 firmware 区并触及 `0xf50000–0xffffff`。 |
 | CLI `erase linux` | PARTIAL | `erase` 命令及文本已定位；参数范围未完整复原，不能与菜单 2 判为等价。 |

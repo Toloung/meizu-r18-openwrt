@@ -211,7 +211,7 @@ new file mode 100755
 index 0000000..c0ffee2
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,53 @@
 +#!/bin/sh
 +
 +log=/root/r18-boot-debug.log
@@ -253,7 +253,8 @@ index 0000000..c0ffee2
 +	run swconfig dev switch0 show
 +}
 +
-+sleep 60
++# Stage 2.3: let Clean Recovery boot normally before the one-shot fallback.
++sleep 180
 +before > "$log"
 +
 +logger -t r18-net-rescue 'starting delayed network recovery'
@@ -295,7 +296,7 @@ diff --git a/target/linux/ramips/image/mt76x8.mk b/target/linux/ramips/image/mt7
 index 96b3aeb..2768399 100644
 --- a/target/linux/ramips/image/mt76x8.mk
 +++ b/target/linux/ramips/image/mt76x8.mk
-@@ -104,6 +104,21 @@ define Device/asus_rt-ac1200-v2
+@@ -104,6 +104,42 @@ define Device/asus_rt-ac1200-v2
  endef
  TARGET_DEVICES += asus_rt-ac1200-v2
  
@@ -303,16 +304,37 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 2.2 Reboot Fix + Chinese LuCI
++  DEVICE_VARIANT := Stage 2.3 Clean Recovery / JFFS2 Residual Test
 +  DEVICE_PACKAGES := kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
-+  # Stage 2.1: no sysupgrade metadata.  This is a static recovery candidate,
-+  # not authorisation to use WPS/TFTP recovery or to flash the device.
++  # Recovery is the only full-firmware artifact.  It intentionally has no
++  # sysupgrade metadata and must not be used without hardware validation.
 +  IMAGES += recovery.bin
-+  IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | check-size
++  IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size
 +  IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size
 +endef
 +TARGET_DEVICES += meizu_r18
++
++# pad-to uses dd conv=sync, which pads with zero bytes.  The R18 TFTP image
++# must instead erase the firmware tail logically: retain its JFFS2 marker and
++# append only 0xff up to the exact 0xf00000-byte firmware partition boundary.
++define Build/r18-pad-to-ff
++	@imagesize="$$(stat -c%s $@)"; \
++	limitsize="$$(($(call exp_units,$(1))))"; \
++	[ "$$imagesize" -le "$$limitsize" ] || { \
++		echo "R18 recovery image is too large: $$imagesize > $$limitsize" >&2; \
++		exit 1; \
++	}; \
++	padsize="$$((limitsize - imagesize))"; \
++	if [ "$$padsize" -gt 0 ]; then \
++		LC_ALL=C dd if=/dev/zero bs="$$padsize" count=1 2>/dev/null | \
++			LC_ALL=C tr '\000' '\377' >> $@; \
++	fi; \
++	[ "$$(stat -c%s $@)" -eq "$$limitsize" ] || { \
++		echo "R18 recovery padding produced an incorrect size" >&2; \
++		exit 1; \
++	}
++endef
 +
  define Device/asus_rt-n10p-v3
    IMAGE_SIZE := 7872k

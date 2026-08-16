@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2.2 Reboot Fix + Chinese LuCI
+name: Meizu R18 Stage 2.3 Clean Recovery / JFFS2 Residual Test
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     paths:
       - 'configs/r18-initramfs.config'
       - 'patches/openwrt-25.12.5/**'
+      - 'scripts/verify_r18_recovery.py'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
           git -C openwrt apply ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           git -C openwrt diff --check
 
-      - name: Check Stage 2.2 source assertions
+      - name: Check Stage 2.3 source assertions
         run: |
           set -eu
           network=openwrt/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
@@ -43,14 +44,16 @@ jobs:
           test -f "$worker"
           grep -F 'START=99' "$rescue"
           grep -F 'USE_PROCD=1' "$rescue"
-          grep -F 'sleep 60' "$worker"
+          grep -F 'sleep 180' "$worker"
           grep -F 'R18-OpenWrt-Test' openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
           grep -F "network='lan'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
           grep -F "luci.main.lang='zh_cn'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
-          grep -F 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+          grep -F 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
+          grep -F 'define Build/r18-pad-to-ff' "$image"
           ! grep -E '^  IMAGE/recovery\.bin .*append-metadata' "$image"
+          grep -F 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
 
-      - name: Configure feeds and Stage 2.2 initramfs
+      - name: Configure feeds and Stage 2.3 initramfs
         working-directory: openwrt
         run: |
           set -eu
@@ -130,18 +133,26 @@ jobs:
           test -n "$initramfs" || { echo '::error::Missing R18 initramfs-kernel.bin'; exit 1; }
           test -n "$sysupgrade" || { echo '::error::Missing R18 squashfs-sysupgrade.bin'; exit 1; }
           test -n "$recovery" || { echo '::error::Missing R18 squashfs-recovery.bin'; exit 1; }
+          test "$(stat -c%s "$sysupgrade")" -lt 15728640 || {
+            echo '::error::R18 sysupgrade must remain a compact image, not a full firmware recovery image'
+            exit 1
+          }
+          python3 scripts/verify_r18_recovery.py "$recovery"
           cp "$initramfs" "$sysupgrade" "$recovery" artifacts/
           cp "$recovery" artifacts/meizu_r18.bin
-          grep -a -q $'\xde\xad\xc0\xde' "$recovery"
+          cmp -s "$recovery" artifacts/meizu_r18.bin || {
+            echo '::error::meizu_r18.bin is not an exact copy of squashfs-recovery.bin'
+            exit 1
+          }
           test "$(sha256sum "$recovery" | awk '{print $1}')" = "$(sha256sum artifacts/meizu_r18.bin | awk '{print $1}')"
           cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
-          printf '%s\n' 'Stage 2.2 Reboot Fix + Chinese LuCI: meizu_r18.bin is a static recovery candidate only; do not use WPS/TFTP recovery or flash it without separately authorised validation.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Stage 2.3 Clean Recovery / JFFS2 Residual Test: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
           cd artifacts
           sha256sum * .config > sha256sums 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: meizu-r18-stage2.2-reboot-fix-chinese-luci
+          name: meizu-r18-stage2.3-clean-recovery-jffs2-residual-test
           path: artifacts/

@@ -7,6 +7,7 @@ on:
       - 'configs/r18-initramfs.config'
       - 'patches/openwrt-25.12.5/**'
       - 'scripts/verify_r18_recovery.py'
+      - 'scripts/verify_r18_stage24.py'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -16,41 +17,44 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout project
+        uses: actions/checkout@v4
 
       - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang flex bison g++ gawk \
             ccache gcc-multilib gettext git libncurses5-dev libssl-dev python3 \
-            python3-setuptools rsync unzip zlib1g-dev file wget
+            python3-setuptools rsync unzip zlib1g-dev file wget patch
 
-      - name: Clone OpenWrt v25.12.5 and apply R18 board patch
+      - name: Prepare OpenWrt 25.12.5
         run: |
+          set -eu
           git clone --depth 1 --branch v25.12.5 https://github.com/openwrt/openwrt.git openwrt
+
+      - name: Apply R18 Stage patch
+        run: |
+          set -eu
           git -C openwrt apply --check ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           git -C openwrt apply ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           git -C openwrt diff --check
 
-      - name: Restore OpenWrt ccache and downloads
+      - name: Restore OpenWrt downloads cache
         uses: actions/cache@v4
         with:
-          path: |
-            openwrt/.ccache
-            openwrt/dl
-          key: ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-dl-v1-${{ hashFiles('configs/r18-initramfs.config', 'patches/openwrt-25.12.5/**') }}
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-v25.12.5-dl-v1
           restore-keys: |
-            ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-dl-v1-
+            ${{ runner.os }}-openwrt-v25.12.5-dl-
 
-      - name: Check Stage 2.4 source assertions
+      - name: Verify R18 source defaults
         run: |
           set -eu
           network=openwrt/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
           worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
+          wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
           image=openwrt/target/linux/ramips/image/mt76x8.mk
-          stage_patch=patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
-          spi_nor_patch=openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch
           check_fixed() {
             desc="$1"
             pattern="$2"
@@ -59,41 +63,50 @@ jobs:
               echo "::error::$desc"
               echo "pattern: $pattern"
               echo "file: $file"
+              echo "reason: required content is absent"
               exit 1
             fi
+            echo "[PASS] $desc"
           }
-          grep -A5 -F 'meizu,r18)' "$network" | grep -F '"1:lan:1" "3:lan:2" "4:wan" "6@eth0"'
-          test -f "$rescue"
-          test -f "$worker"
-          grep -F 'START=99' "$rescue"
-          grep -F 'USE_PROCD=1' "$rescue"
-          grep -F 'sleep 180' "$worker"
-          grep -F 'R18-OpenWrt-Test' openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
-          grep -F "network='lan'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
-          grep -F "luci.main.lang='zh_cn'" openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
-          grep -F 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
-          grep -F 'define Build/r18-pad-to-ff' "$image"
-          ! grep -E '^  IMAGE/recovery\.bin .*append-metadata' "$image"
-          grep -F 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
-          test -f "$stage_patch" || {
-            echo "::error::missing managed Stage patch: $stage_patch"
-            exit 1
+          check_file() {
+            desc="$1"
+            file="$2"
+            if [ ! -f "$file" ]; then
+              echo "::error::$desc"
+              echo "file: $file"
+              echo "reason: required file is absent"
+              exit 1
+            fi
+            echo "[PASS] $desc"
           }
-          check_fixed 'managed Stage patch does not inject the Stage 2.4 935 kernel patch' 'diff --git a/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch' "$stage_patch"
-          test -f "$spi_nor_patch" || {
-            echo "::error::missing expected Stage 2.4 kernel patch: $spi_nor_patch"
-            exit 1
+          check_absent() {
+            desc="$1"
+            pattern="$2"
+            file="$3"
+            if grep -Eq -- "$pattern" "$file"; then
+              echo "::error::$desc"
+              echo "pattern: $pattern"
+              echo "file: $file"
+              echo "reason: prohibited content is present"
+              exit 1
+            fi
+            echo "[PASS] $desc"
           }
-          check_fixed 'generated 935 patch is missing the dedicated S25FL128S1 post-BFPT fixup' 's25fl128s1_post_bfpt_fixups' "$spi_nor_patch"
-          check_fixed 'generated 935 patch is missing the S25FL128S1 256-byte page size assignment' 'nor->params->page_size = 256;' "$spi_nor_patch"
-          check_fixed 'generated 935 patch is missing the S25FL128S1 flash-info entry context' '.name = "s25fl128s1",' "$spi_nor_patch"
-          check_fixed 'generated 935 patch is missing the dedicated S25FL128S1 fixup binding' '.fixups = &s25fl128s1_fixups,' "$spi_nor_patch"
-          if grep -Fq -- '.fixups = &s25fs_s_nor_fixups,' "$spi_nor_patch"; then
-            echo "::error::Stage 2.4 must not bind S25FL128S1 to s25fs_s_nor_fixups"
-            exit 1
-          fi
+          check_fixed 'R18 Ethernet mapping' '"1:lan:1" "3:lan:2" "4:wan" "6@eth0"' "$network"
+          check_file 'r18-net-rescue' "$rescue"
+          check_file 'r18-net-rescue worker' "$worker"
+          check_fixed 'rescue START=99' 'START=99' "$rescue"
+          check_fixed 'rescue procd enabled' 'USE_PROCD=1' "$rescue"
+          check_fixed 'rescue delay = 180' 'sleep 180' "$worker"
+          check_fixed 'recovery Wi-Fi SSID' 'R18-OpenWrt-Test' "$wifi"
+          check_fixed 'recovery Wi-Fi network = lan' "network='lan'" "$wifi"
+          check_fixed 'Chinese LuCI default' "luci.main.lang='zh_cn'" "$wifi"
+          check_fixed 'recovery image padding' 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
+          check_fixed 'r18 pad-to-FF image helper' 'define Build/r18-pad-to-ff' "$image"
+          check_absent 'recovery image must not contain sysupgrade metadata' '^  IMAGE/recovery\.bin .*append-metadata' "$image"
+          check_fixed 'compact sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
 
-      - name: Configure feeds and Stage 2.4 initramfs
+      - name: Prepare build configuration
         working-directory: openwrt
         run: |
           set -eu
@@ -145,6 +158,14 @@ jobs:
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' 'luci-i18n-firewall-zh-cn'
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' 'luci-i18n-package-manager-zh-cn'
 
+      - name: Restore OpenWrt compiler cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt/.ccache
+          key: ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-${{ hashFiles('configs/r18-initramfs.config', 'patches/openwrt-25.12.5/**') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-
+
       - name: Inject private 2.4 GHz test PSK
         env:
           R18_WIFI_TEST_PSK: ${{ secrets.R18_WIFI_TEST_PSK }}
@@ -155,11 +176,21 @@ jobs:
           umask 077
           printf '%s\n' "$R18_WIFI_TEST_PSK" > openwrt/files/etc/r18-wifi-test-psk
 
-      - name: Download sources
+      - name: Download OpenWrt sources
         working-directory: openwrt
-        run: make download -j"$(nproc)"
+        run: |
+          set -euo pipefail
+          make download -j"$(nproc)"
 
-      - name: Build
+      - name: Verify Stage 2.4 SPI-NOR kernel patch
+        run: |
+          set -eu
+          python3 scripts/verify_r18_stage24.py \
+            --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
+            --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
+
+      - name: Build firmware
         working-directory: openwrt
         run: |
           set -euo pipefail
@@ -179,34 +210,12 @@ jobs:
             echo '::error::Prepared Linux spansion.c was not found after the OpenWrt build'
             exit 1
           }
-          require_kernel_literal() {
-            if ! grep -Fq -- "$1" "$spansion"; then
-              echo "::error::missing expected applied S25FL128S1 kernel content: $2"
-              exit 1
-            fi
-          }
-          require_kernel_literal 's25fl128s1_post_bfpt_fixups' 'dedicated post-BFPT fixup'
-          require_kernel_literal 'nor->params->page_size = 256;' '256-byte page size assignment'
-          s25fl128s1_entry=$(sed -n '/SNOR_ID(0x01, 0x20, 0x18, 0x4d, 0x01, 0x80)/,/^[[:space:]]*}, {[[:space:]]*$/p' "$spansion")
-          test -n "$s25fl128s1_entry" || {
-            echo '::error::S25FL128S1 JEDEC 01 20 18 4d 01 80 entry was not found in applied spansion.c'
-            exit 1
-          }
-          printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.name = "s25fl128s1",' || {
-            echo '::error::JEDEC 01 20 18 4d 01 80 is not the s25fl128s1 entry'
-            exit 1
-          }
-          printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.fixups = &s25fl128s1_fixups,' || {
-            echo '::error::JEDEC 01 20 18 4d 01 80 is missing the dedicated S25FL128S1 fixup binding'
-            exit 1
-          }
-          if printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.fixups = &s25fs_s_nor_fixups,'; then
-            echo '::error::JEDEC 01 20 18 4d 01 80 must not use s25fs_s_nor_fixups'
-            exit 1
-          fi
+          python3 scripts/verify_r18_stage24.py \
+            --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
+            --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --spansion "$spansion"
 
-      - name: Verify images and create checksums
-        if: always()
+      - name: Verify recovery image
         run: |
           set -eu
           mkdir -p artifacts
@@ -220,10 +229,12 @@ jobs:
           test -n "$initramfs" || { echo '::error::Missing R18 initramfs-kernel.bin'; exit 1; }
           test -n "$sysupgrade" || { echo '::error::Missing R18 squashfs-sysupgrade.bin'; exit 1; }
           test -n "$recovery" || { echo '::error::Missing R18 squashfs-recovery.bin'; exit 1; }
+          echo '[PASS] required R18 images exist'
           test "$(stat -c%s "$sysupgrade")" -lt 15728640 || {
             echo '::error::R18 sysupgrade must remain a compact image, not a full firmware recovery image'
             exit 1
           }
+          echo '[PASS] sysupgrade remains compact'
           python3 scripts/verify_r18_recovery.py "$recovery"
           cp "$initramfs" "$sysupgrade" "$recovery" artifacts/
           cp "$recovery" artifacts/meizu_r18.bin
@@ -231,15 +242,60 @@ jobs:
             echo '::error::meizu_r18.bin is not an exact copy of squashfs-recovery.bin'
             exit 1
           }
-          test "$(sha256sum "$recovery" | awk '{print $1}')" = "$(sha256sum artifacts/meizu_r18.bin | awk '{print $1}')"
+          recovery_sha=$(sha256sum "$recovery" | awk '{print $1}')
+          candidate_sha=$(sha256sum artifacts/meizu_r18.bin | awk '{print $1}')
+          test "$recovery_sha" = "$candidate_sha" || {
+            echo '::error::meizu_r18.bin checksum differs from squashfs-recovery.bin'
+            exit 1
+          }
+          echo '[PASS] meizu_r18.bin exactly matches recovery image'
           cp openwrt/.config artifacts/.config || true
           cp kernel-build.log artifacts/kernel-build.log || true
           printf '%s\n' 'Stage 2.4 - Fix S25FL128S1 256-byte page programming: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
-          cd artifacts
-          sha256sum * .config > sha256sums 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - name: Generate build metadata
+        run: |
+          set -eu
+          test -d artifacts || {
+            echo '::error::artifact directory is missing after recovery verification'
+            exit 1
+          }
+          (
+            cd artifacts
+            sha256sum -- *.bin > SHA256SUMS
+          )
+          {
+            echo 'Project: Meizu R18 OpenWrt'
+            echo 'Stage: 2.4'
+            echo 'OpenWrt: 25.12.5'
+            echo 'Kernel: 6.12.94'
+            echo 'Target: ramips/mt76x8'
+            echo 'Device: meizu_r18'
+            echo "Git commit: ${GITHUB_SHA}"
+            echo "Git branch: ${GITHUB_REF_NAME}"
+            echo "GitHub Actions run: ${GITHUB_RUN_NUMBER} / ${GITHUB_RUN_ID}"
+            echo "Build time UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo
+            echo 'SPI NOR:'
+            echo '  part: s25fl128s1'
+            echo '  JEDEC: 01 20 18 4d 01 80'
+            echo '  Stage 2.4 page size fix: 256 bytes'
+            echo
+            echo 'Recovery:'
+            echo '  expected size: 15728640'
+            echo '  firmware range: 0x050000-0xF50000'
+            echo '  rootfs_data marker: DE AD C0 DE'
+            echo '  FF suffix verification: PASS'
+            echo
+            echo 'Images (SHA256):'
+            cat artifacts/SHA256SUMS
+          } > artifacts/BUILD-INFO.txt
+          echo '[PASS] BUILD-INFO.txt generated'
+          echo '[PASS] SHA256SUMS generated'
+
+      - name: Package artifact
         if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: meizu-r18-stage2.4-s25fl128s1-page-size-fix
           path: artifacts/

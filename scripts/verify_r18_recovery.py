@@ -125,6 +125,7 @@ def main() -> int:
     print(f"JFFS2 marker offset:     {format_hex(result['rootfs_data_start'])}")
     print(f"FF padding bytes:        {result['padding_bytes']} ({format_hex(result['padding_bytes'])})")
     print(f"Recovery total size:     {FIRMWARE_SIZE} ({format_hex(FIRMWARE_SIZE)})")
+    print("R18 recovery verification: PASS")
     return 0
 
 

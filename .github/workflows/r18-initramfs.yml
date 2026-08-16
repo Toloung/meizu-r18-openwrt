@@ -49,10 +49,16 @@ jobs:
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
           worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
           image=openwrt/target/linux/ramips/image/mt76x8.mk
+          stage_patch=patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           spi_nor_patch=openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch
-          require_stage24_literal() {
-            if ! grep -Fq "$1" "$2"; then
-              echo "::error::missing expected Stage 2.4 content: $3 ($2)"
+          check_fixed() {
+            desc="$1"
+            pattern="$2"
+            file="$3"
+            if ! grep -Fq -- "$pattern" "$file"; then
+              echo "::error::$desc"
+              echo "pattern: $pattern"
+              echo "file: $file"
               exit 1
             fi
           }
@@ -69,15 +75,20 @@ jobs:
           grep -F 'define Build/r18-pad-to-ff' "$image"
           ! grep -E '^  IMAGE/recovery\.bin .*append-metadata' "$image"
           grep -F 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+          test -f "$stage_patch" || {
+            echo "::error::missing managed Stage patch: $stage_patch"
+            exit 1
+          }
+          check_fixed 'managed Stage patch does not inject the Stage 2.4 935 kernel patch' 'diff --git a/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch' "$stage_patch"
           test -f "$spi_nor_patch" || {
             echo "::error::missing expected Stage 2.4 kernel patch: $spi_nor_patch"
             exit 1
           }
-          require_stage24_literal 's25fl128s1_post_bfpt_fixups' "$spi_nor_patch" 'dedicated S25FL128S1 post-BFPT fixup'
-          require_stage24_literal 'nor->params->page_size = 256;' "$spi_nor_patch" 'S25FL128S1 256-byte page size assignment'
-          require_stage24_literal '.name = "s25fl128s1",' "$spi_nor_patch" 'S25FL128S1 flash-info entry context'
-          require_stage24_literal '.fixups = &s25fl128s1_fixups,' "$spi_nor_patch" 'S25FL128S1 dedicated fixup binding'
-          if grep -Fq '.fixups = &s25fs_s_nor_fixups,' "$spi_nor_patch"; then
+          check_fixed 'generated 935 patch is missing the dedicated S25FL128S1 post-BFPT fixup' 's25fl128s1_post_bfpt_fixups' "$spi_nor_patch"
+          check_fixed 'generated 935 patch is missing the S25FL128S1 256-byte page size assignment' 'nor->params->page_size = 256;' "$spi_nor_patch"
+          check_fixed 'generated 935 patch is missing the S25FL128S1 flash-info entry context' '.name = "s25fl128s1",' "$spi_nor_patch"
+          check_fixed 'generated 935 patch is missing the dedicated S25FL128S1 fixup binding' '.fixups = &s25fl128s1_fixups,' "$spi_nor_patch"
+          if grep -Fq -- '.fixups = &s25fs_s_nor_fixups,' "$spi_nor_patch"; then
             echo "::error::Stage 2.4 must not bind S25FL128S1 to s25fs_s_nor_fixups"
             exit 1
           fi
@@ -163,13 +174,13 @@ jobs:
       - name: Verify prepared S25FL128S1 kernel fixup
         run: |
           set -eu
-          spansion=$(find openwrt/build_dir -type f -path '*/drivers/mtd/spi-nor/spansion.c' -print -quit)
+          spansion=$(find openwrt/build_dir -type f -path '*/linux-ramips_mt76x8/linux-*/drivers/mtd/spi-nor/spansion.c' -print -quit)
           test -n "$spansion" || {
             echo '::error::Prepared Linux spansion.c was not found after the OpenWrt build'
             exit 1
           }
           require_kernel_literal() {
-            if ! grep -Fq "$1" "$spansion"; then
+            if ! grep -Fq -- "$1" "$spansion"; then
               echo "::error::missing expected applied S25FL128S1 kernel content: $2"
               exit 1
             fi
@@ -181,15 +192,15 @@ jobs:
             echo '::error::S25FL128S1 JEDEC 01 20 18 4d 01 80 entry was not found in applied spansion.c'
             exit 1
           }
-          printf '%s\n' "$s25fl128s1_entry" | grep -Fq '.name = "s25fl128s1",' || {
+          printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.name = "s25fl128s1",' || {
             echo '::error::JEDEC 01 20 18 4d 01 80 is not the s25fl128s1 entry'
             exit 1
           }
-          printf '%s\n' "$s25fl128s1_entry" | grep -Fq '.fixups = &s25fl128s1_fixups,' || {
+          printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.fixups = &s25fl128s1_fixups,' || {
             echo '::error::JEDEC 01 20 18 4d 01 80 is missing the dedicated S25FL128S1 fixup binding'
             exit 1
           }
-          if printf '%s\n' "$s25fl128s1_entry" | grep -Fq '.fixups = &s25fs_s_nor_fixups,'; then
+          if printf '%s\n' "$s25fl128s1_entry" | grep -Fq -- '.fixups = &s25fs_s_nor_fixups,'; then
             echo '::error::JEDEC 01 20 18 4d 01 80 must not use s25fs_s_nor_fixups'
             exit 1
           fi

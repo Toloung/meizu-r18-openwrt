@@ -27,6 +27,13 @@ RESCUE = "target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue"
 RESCUE_DISABLE = "target/linux/ramips/mt76x8/base-files/etc/uci-defaults/98-r18-net-rescue-disable"
 HEALTHCHECK = "target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck"
 BUILD_INFO = "target/linux/ramips/mt76x8/base-files/etc/r18-build-info"
+ROOTFS_PATHS = (
+    "etc/init.d/r18-net-rescue",
+    "etc/uci-defaults/98-r18-net-rescue-disable",
+    "usr/sbin/r18-healthcheck",
+    "etc/r18-build-info",
+    "etc/rc.d",
+)
 
 
 def fail(message: str) -> None:
@@ -113,10 +120,21 @@ def verify_rootfs(rootfs: Path) -> None:
     require(health.stat().st_mode & 0o111, "Stage 2.5 r18-healthcheck is not executable in rootfs")
     require(rescue.stat().st_mode & 0o111, "Stage 2.5 r18-net-rescue is not executable in rootfs")
     require(
+        "procd_set_param command /usr/sbin/r18-net-rescue-worker" in rescue.read_text(encoding="utf-8"),
+        "Stage 2.5 rootfs r18-net-rescue lacks its retained manual worker",
+    )
+    require(
+        "/etc/init.d/r18-net-rescue disable" in disable.read_text(encoding="utf-8"),
+        "Stage 2.5 rootfs rescue disable hook is missing",
+    )
+    build_identity = build_info.read_text(encoding="utf-8")
+    for required in ("Stage=2.5", "NET_RESCUE_AUTOSTART=disabled"):
+        require(required in build_identity, f"Stage 2.5 rootfs build identity lacks {required}")
+    require(
         not (rootfs / "etc/rc.d/S99r18-net-rescue").exists(),
         "Stage 2.5 rootfs unexpectedly contains automatic S99 r18-net-rescue link",
     )
-    passed("Stage 2.5 rootfs retains manual rescue and contains no S99 auto-start link")
+    passed("SquashFS readable and Stage 2.5 rootfs retains manual rescue with no S99 auto-start link")
 
 
 def verify_recovery_rootfs(recovery: Path) -> None:
@@ -142,9 +160,14 @@ def verify_recovery_rootfs(recovery: Path) -> None:
         squashfs_path = temporary_path / "rootfs.squashfs"
         rootfs = temporary_path / "rootfs"
         squashfs_path.write_bytes(squashfs)
-        result = subprocess.run([unsquashfs, "-d", str(rootfs), str(squashfs_path)], text=True, capture_output=True, check=False)
+        result = subprocess.run(
+            [unsquashfs, "-no-progress", "-d", str(rootfs), str(squashfs_path), *ROOTFS_PATHS],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if result.returncode:
-            fail("unsquashfs failed: " + (result.stdout + result.stderr).strip())
+            fail("selective unsquashfs failed: " + (result.stdout + result.stderr).strip())
         verify_rootfs(rootfs)
 
 

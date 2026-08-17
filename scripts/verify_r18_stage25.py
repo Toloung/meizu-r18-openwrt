@@ -73,6 +73,11 @@ def verify_stage25_source(stage_patch: Path, generated_patch: Path) -> None:
     require("S99r18-net-rescue" not in text, "Stage patch must not generate an S99 rescue symlink")
     passed("default rescue auto-start is disabled by the first-boot native init hook")
 
+    require("enable()" in rescue, "r18-net-rescue lacks its image-build enable guard")
+    require("[ -n \"$IPKG_INSTROOT\" ] && return 0" in rescue, "r18-net-rescue enables itself during image construction")
+    require("ln -sf \"../init.d/$name\" \"$IPKG_INSTROOT/etc/rc.d/S${START}" in rescue, "r18-net-rescue manual enable implementation is missing")
+    passed("R18 rootfs build skips r18-net-rescue enable while manual enable remains available")
+
     health = section_for_new_file(text, HEALTHCHECK)
     require("new file mode 100755" in health, "r18-healthcheck is not executable")
     for required in (
@@ -130,10 +135,8 @@ def verify_rootfs(rootfs: Path) -> None:
     build_identity = build_info.read_text(encoding="utf-8")
     for required in ("Stage=2.5", "NET_RESCUE_AUTOSTART=disabled"):
         require(required in build_identity, f"Stage 2.5 rootfs build identity lacks {required}")
-    require(
-        not (rootfs / "etc/rc.d/S99r18-net-rescue").exists(),
-        "Stage 2.5 rootfs unexpectedly contains automatic S99 r18-net-rescue link",
-    )
+    enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
+    require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")
     passed("SquashFS readable and Stage 2.5 rootfs retains manual rescue with no S99 auto-start link")
 
 
@@ -189,6 +192,7 @@ def main() -> int:
         if args.recovery:
             verify_recovery_rootfs(args.recovery)
     except (OSError, tarfile.TarError, VerificationError) as error:
+        print(f"::error::{error}", file=sys.stderr)
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 

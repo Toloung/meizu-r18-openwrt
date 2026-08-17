@@ -159,19 +159,37 @@ index 0000000..c0ffee5
 +fi
 +
 +exit 0
-diff --git a/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+diff --git a/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults
+new file mode 100755
+index 0000000..c0ffee8
+--- /dev/null
++++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults
+@@ -0,0 +1,12 @@
++#!/bin/sh
++# First boot only: leave regional settings to the owner, but provide a
++# recognisable router hostname and the requested Chinese LuCI default.
++
++[ "$(board_name)" = 'meizu,r18' ] || exit 0
++
++uci set system.@system[0].hostname='Meizu-R18'
++uci set luci.main.lang='zh_cn'
++uci commit system
++uci commit luci
++
++exit 0
+diff --git a/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
 new file mode 100644
 index 0000000..c0ffee0
 --- /dev/null
-+++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
-@@ -0,0 +1,36 @@
++++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
+@@ -0,0 +1,64 @@
 +#!/bin/sh
 +# First boot only. CI supplies the PSK in an image overlay; never store it in
 +# the public board patch. The boot sequence runs wifi config before this.
 +
-+psk_file=/etc/r18-wifi-test-psk
++psk_file=/etc/r18-wifi-psk
 +[ -r "$psk_file" ] || {
-+	logger -t r18-wifi-test 'No private PSK supplied; leaving Wi-Fi disabled.'
++	logger -t r18-wifi-defaults 'No private PSK supplied; leaving Wi-Fi disabled.'
 +	exit 0
 +}
 +
@@ -179,27 +197,55 @@ index 0000000..c0ffee0
 +rm -f "$psk_file"
 +
 +[ "${#psk}" -ge 8 ] || {
-+	logger -t r18-wifi-test 'Invalid private PSK; leaving Wi-Fi disabled.'
++	logger -t r18-wifi-defaults 'Invalid private PSK; leaving Wi-Fi disabled.'
 +	exit 0
 +}
 +
-+for radio in $(uci show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-device$/\1/p'); do
-+	[ "$(uci -q get "wireless.$radio.band")" = '2g' ] || continue
-+
-+	uci set "wireless.$radio.disabled=0"
-+	uci -q delete wireless.r18_24g
-+	uci set wireless.r18_24g='wifi-iface'
-+	uci set wireless.r18_24g.device="$radio"
-+	uci set wireless.r18_24g.mode='ap'
-+	uci set wireless.r18_24g.network='lan'
-+	uci set wireless.r18_24g.ssid='R18-OpenWrt-Test'
-+	uci set wireless.r18_24g.encryption='psk2'
-+	uci set wireless.r18_24g.key="$psk"
++# wifi config may create a generic default iface for each PHY. Replace all of
++# those first-boot placeholders with the two R18 LAN APs.
++for iface in $(uci show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-iface$/\1/p'); do
++	uci -q delete "wireless.$iface"
 +done
 +
++uci -q delete wireless.r18_24g
++uci -q delete wireless.r18_5g
++
++configure_ap() {
++	section="$1"
++	radio="$2"
++	ssid="$3"
++
++	uci set "wireless.$radio.disabled=0"
++	uci set "wireless.$section=wifi-iface"
++	uci set "wireless.$section.device=$radio"
++	uci set "wireless.$section.mode=ap"
++	uci set "wireless.$section.network=lan"
++	uci set "wireless.$section.ssid=$ssid"
++	# WPA2-PSK/CCMP is supported by the selected compact wpad package. A later
++	# LuCI change may select WPA3 where the installed AP package supports it.
++	uci set "wireless.$section.encryption=psk2+ccmp"
++	uci set "wireless.$section.key=$psk"
++}
++
++have_24g=0
++have_5g=0
++for radio in $(uci show wireless | sed -n 's/^wireless\.\([^=]*\)=wifi-device$/\1/p'); do
++	case "$(uci -q get "wireless.$radio.band")" in
++		2g)
++			configure_ap r18_24g "$radio" 'R18-OpenWrt'
++			have_24g=1
++			;;
++		5g)
++			configure_ap r18_5g "$radio" 'R18-OpenWrt-5G'
++			have_5g=1
++			;;
++	esac
++done
++
++[ "$have_24g" = 1 ] || logger -t r18-wifi-defaults 'No 2.4 GHz radio was generated.'
++[ "$have_5g" = 1 ] || logger -t r18-wifi-defaults 'No 5 GHz radio was generated.'
++
 +uci commit wireless
-+uci set luci.main.lang='zh_cn'
-+uci commit luci
 +exit 0
 diff --git a/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue b/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
 new file mode 100755
@@ -299,9 +345,10 @@ new file mode 100644
 index 0000000..c0ffee6
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,10 @@
 +Project=Meizu R18 OpenWrt
-+Stage=2.5
++Stage=3
++NAME=Functional Complete
 +OpenWrt=25.12.5
 +Kernel=6.12.94
 +Device=meizu_r18
@@ -314,7 +361,7 @@ new file mode 100755
 index 0000000..c0ffee7
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,212 @@
 +#!/bin/sh
 +# Read-only Meizu R18 diagnostics. It intentionally does not alter services,
 +# configuration, or persistent storage.
@@ -369,6 +416,7 @@ index 0000000..c0ffee7
 +
 +echo
 +echo 'SYSTEM'
++echo "Board: $(board_name 2>/dev/null || echo unavailable)"
 +echo "OpenWrt: $(. /etc/openwrt_release 2>/dev/null; echo "${DISTRIB_RELEASE:-unavailable}")"
 +echo "Kernel: $(uname -r 2>/dev/null || echo unavailable)"
 +echo "Uptime: $(uptime 2>/dev/null || echo unavailable)"
@@ -395,6 +443,17 @@ index 0000000..c0ffee7
 +echo "Write size: ${write_size:-unavailable}"
 +erase_size="$(cat /sys/class/mtd/mtd6/erasesize 2>/dev/null || true)"
 +echo "Erase size: ${erase_size:-unavailable}"
++
++echo
++echo 'MTD LAYOUT'
++cat /proc/mtd 2>/dev/null || echo 'MTD layout: unavailable'
++for partition in bootloader config factory firmware storage; do
++	if grep -q "\"$partition\"" /proc/mtd 2>/dev/null; then
++		pass "MTD partition present: $partition"
++	else
++		warn "MTD partition unavailable: $partition"
++	fi
++done
 +
 +echo
 +echo 'JFFS2'
@@ -450,26 +509,35 @@ index 0000000..c0ffee7
 +	echo 'LAN bridge status: unavailable'
 +	warn 'LAN bridge is not UP'
 +fi
++wan_status="$(ubus call network.interface.wan status 2>/dev/null)"
++case "$wan_status" in
++	*'"up": true'*) echo 'WAN status: UP'; pass 'WAN interface is up' ;;
++	*) echo 'WAN status: down or unavailable'; warn 'WAN interface is not up' ;;
++esac
 +
 +echo
 +echo 'WIFI'
-+if ip link show phy0-ap0 >/dev/null 2>&1; then
-+	echo 'radio0: present'
-+	echo 'phy0-ap0: present'
-+	ssid="$(iwinfo phy0-ap0 info 2>/dev/null | sed -n 's/.*ESSID: "\(.*\)"/\1/p' | head -n 1)"
-+	echo "SSID: ${ssid:-unavailable}"
-+	status="$(ubus call hostapd.phy0-ap0 get_status 2>/dev/null)"
-+	case "$status" in
-+		*'"status": "ENABLED"'*) echo 'AP status: ENABLED'; pass 'hostapd AP is enabled' ;;
-+		*) echo 'AP status: unavailable'; warn 'hostapd AP status is unavailable' ;;
-+	esac
-+else
-+	echo 'radio0: unavailable'
-+	echo 'phy0-ap0: unavailable'
-+	echo 'SSID: unavailable'
-+	echo 'AP status: unavailable'
-+	warn '2.4 GHz AP is unavailable'
-+fi
++radio_status() {
++	label="$1"
++	interface="$2"
++
++	if ip link show "$interface" >/dev/null 2>&1; then
++		echo "$label: present ($interface)"
++		ssid="$(iwinfo "$interface" info 2>/dev/null | sed -n 's/.*ESSID: "\(.*\)"/\1/p' | head -n 1)"
++		echo "$label SSID: ${ssid:-unavailable}"
++		status="$(ubus call "hostapd.$interface" get_status 2>/dev/null)"
++		case "$status" in
++			*'"status": "ENABLED"'*) echo "$label AP status: ENABLED"; pass "$label hostapd AP is enabled" ;;
++			*) echo "$label AP status: unavailable"; warn "$label hostapd AP status is unavailable" ;;
++		esac
++	else
++		echo "$label: unavailable ($interface)"
++		warn "$label AP is unavailable"
++	fi
++}
++
++radio_status 'radio0 / 2.4 GHz' phy0-ap0
++radio_status 'radio1 / 5 GHz' phy1-ap0
 +
 +echo
 +echo 'RESCUE'
@@ -545,8 +613,8 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 2.5 Disable Automatic Network Rescue
-+  DEVICE_PACKAGES := kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
++  DEVICE_VARIANT := Stage 3 Functional Complete
++  DEVICE_PACKAGES := kmod-mt76 kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
 +  # Recovery is the only full-firmware artifact.  It intentionally has no
 +  # sysupgrade metadata and must not be used without hardware validation.

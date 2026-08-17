@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 2.5 - Disable Automatic Network Rescue
+name: Meizu R18 Stage 3 - Functional Complete
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
       - 'scripts/verify_r18_recovery.py'
       - 'scripts/verify_r18_stage24.py'
       - 'scripts/verify_r18_stage25.py'
+      - 'scripts/verify_r18_stage3.py'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -54,7 +55,7 @@ jobs:
           network=openwrt/target/linux/ramips/mt76x8/base-files/etc/board.d/02_network
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
           worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
-          wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-test
+          wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
           image=openwrt/target/linux/ramips/image/mt76x8.mk
           check_fixed() {
             desc="$1"
@@ -99,38 +100,46 @@ jobs:
           check_fixed 'rescue START=99' 'START=99' "$rescue"
           check_fixed 'rescue procd enabled' 'USE_PROCD=1' "$rescue"
           check_fixed 'rescue delay = 180' 'sleep 180' "$worker"
-          check_fixed 'recovery Wi-Fi SSID' 'R18-OpenWrt-Test' "$wifi"
-          check_fixed 'recovery Wi-Fi network = lan' "network='lan'" "$wifi"
-          check_fixed 'Chinese LuCI default' "luci.main.lang='zh_cn'" "$wifi"
+          check_fixed 'Stage 3 2.4 GHz SSID' 'R18-OpenWrt' "$wifi"
+          check_fixed 'Stage 3 5 GHz SSID' 'R18-OpenWrt-5G' "$wifi"
+          check_fixed 'Stage 3 Wi-Fi LAN membership' 'wireless.$section.network=lan' "$wifi"
           check_fixed 'recovery image padding' 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
           check_fixed 'r18 pad-to-FF image helper' 'define Build/r18-pad-to-ff' "$image"
           check_absent 'recovery image must not contain sysupgrade metadata' '^  IMAGE/recovery\.bin .*append-metadata' "$image"
           check_fixed 'compact sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
 
-      - name: Verify Stage 2.5 rescue and healthcheck source
+      - name: Verify Stage 3 source defaults
         run: |
           set -eu
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
           disable=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/98-r18-net-rescue-disable
+          defaults=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults
+          wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
           health=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
           build_info=openwrt/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
-          for file in "$rescue" "$disable" "$health" "$build_info"; do
-            test -f "$file" || { echo "::error::Missing Stage 2.5 file: $file"; exit 1; }
+          for file in "$rescue" "$disable" "$defaults" "$wifi" "$health" "$build_info"; do
+            test -f "$file" || { echo "::error::Missing Stage 3 file: $file"; exit 1; }
           done
           test -x "$rescue" || { echo "::error::r18-net-rescue is not executable"; exit 1; }
           test -x "$health" || { echo "::error::r18-healthcheck is not executable"; exit 1; }
           sh -n "$rescue"
           sh -n "$disable"
+          sh -n "$defaults"
+          sh -n "$wifi"
           sh -n "$health"
           grep -Fq '/etc/init.d/r18-net-rescue disable' "$disable" || {
-            echo '::error::Stage 2.5 rescue disable hook is missing'
+            echo '::error::Stage 3 rescue disable hook is missing'
             exit 1
           }
           if grep -Fq 'S99r18-net-rescue' ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch; then
             echo '::error::Stage patch must not create an S99 r18-net-rescue link'
             exit 1
           fi
-          echo '[PASS] Stage 2.5 rescue defaults and healthcheck shell syntax'
+          python3 scripts/verify_r18_stage3.py \
+            --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
+            --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --config configs/r18-initramfs.config
+          echo '[PASS] Stage 3 defaults and healthcheck shell syntax'
 
       - name: Prepare build configuration
         working-directory: openwrt
@@ -183,6 +192,10 @@ jobs:
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' 'luci-i18n-base-zh-cn'
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' 'luci-i18n-firewall-zh-cn'
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' 'luci-i18n-package-manager-zh-cn'
+          require_luci_config 'CONFIG_PACKAGE_kmod-mt76=y' 'kmod-mt76'
+          require_luci_config 'CONFIG_PACKAGE_kmod-mt76-core=y' 'kmod-mt76-core'
+          require_luci_config 'CONFIG_PACKAGE_kmod-mt76x2-common=y' 'kmod-mt76x2-common'
+          require_luci_config 'CONFIG_PACKAGE_kmod-mt76x2=y' 'kmod-mt76x2 (contains mt76x2e)'
 
       - name: Restore OpenWrt compiler cache
         uses: actions/cache@v4
@@ -192,15 +205,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-
 
-      - name: Inject private 2.4 GHz test PSK
+      - name: Inject private Stage 3 Wi-Fi PSK
         env:
+          R18_WIFI_PSK: ${{ secrets.R18_WIFI_PSK }}
           R18_WIFI_TEST_PSK: ${{ secrets.R18_WIFI_TEST_PSK }}
         run: |
-          test -n "$R18_WIFI_TEST_PSK" || { echo 'R18_WIFI_TEST_PSK secret is required'; exit 1; }
-          test "${#R18_WIFI_TEST_PSK}" -ge 8 || { echo 'R18_WIFI_TEST_PSK must be at least 8 characters'; exit 1; }
+          psk="${R18_WIFI_PSK:-$R18_WIFI_TEST_PSK}"
+          test -n "$psk" || { echo 'R18_WIFI_PSK or legacy R18_WIFI_TEST_PSK secret is required'; exit 1; }
+          test "${#psk}" -ge 8 || { echo 'Stage 3 Wi-Fi PSK must be at least 8 characters'; exit 1; }
           install -d -m 0755 openwrt/files/etc
           umask 077
-          printf '%s\n' "$R18_WIFI_TEST_PSK" > openwrt/files/etc/r18-wifi-test-psk
+          printf '%s\n' "$psk" > openwrt/files/etc/r18-wifi-psk
 
       - name: Download OpenWrt sources
         working-directory: openwrt
@@ -216,12 +231,13 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
-      - name: Verify Stage 2.5 source and no-fuzz kernel patch
+      - name: Verify Stage 3 source and no-fuzz kernel patch
         run: |
           set -eu
-          python3 scripts/verify_r18_stage25.py \
+          python3 scripts/verify_r18_stage3.py \
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --config configs/r18-initramfs.config \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
       - name: Build firmware
@@ -284,11 +300,32 @@ jobs:
           }
           echo '[PASS] meizu_r18.bin exactly matches recovery image'
           cp kernel-build.log artifacts/kernel-build.log || true
-          python3 scripts/verify_r18_stage25.py \
+          python3 scripts/verify_r18_stage3.py \
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
+            --config configs/r18-initramfs.config \
             --recovery "$recovery"
-          printf '%s\n' 'Stage 2.5 - Disable Automatic Network Rescue: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any WPS/TFTP recovery or flash operation.' > artifacts/NOT-FOR-FLASHING.txt
+          python3 - "$recovery" "$sysupgrade" <<'PY' > artifacts/IMAGE-SIZES.txt
+          import struct
+          import sys
+          from pathlib import Path
+
+          recovery = Path(sys.argv[1])
+          sysupgrade = Path(sys.argv[2])
+          with recovery.open('rb') as image:
+              header = image.read(64)
+              kernel_size = 64 + struct.unpack_from('>I', header, 12)[0]
+              image.seek(kernel_size)
+              superblock = image.read(48)
+              squashfs_bytes_used = struct.unpack_from('<Q', superblock, 40)[0]
+          print(f'kernel bytes: {kernel_size}')
+          print(f'squashfs bytes_used: {squashfs_bytes_used}')
+          print(f'sysupgrade bytes: {sysupgrade.stat().st_size}')
+          print(f'recovery bytes: {recovery.stat().st_size}')
+          print('rootfs_data offset: 0x00650000')
+          PY
+          cat artifacts/IMAGE-SIZES.txt
+          printf '%s\n' 'Stage 3 - Functional Complete: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any flash operation.' > artifacts/NOT-FOR-FLASHING.txt
 
       - name: Generate build metadata
         run: |
@@ -303,7 +340,7 @@ jobs:
           )
           {
             echo 'Project: Meizu R18 OpenWrt'
-            echo 'Stage: 2.5'
+            echo 'Stage: 3 - Functional Complete'
             echo 'OpenWrt: 25.12.5'
             echo 'Kernel: 6.12.94'
             echo 'Target: ramips/mt76x8'
@@ -328,6 +365,9 @@ jobs:
             echo '  rootfs_data marker: DE AD C0 DE'
             echo '  FF suffix verification: PASS'
             echo
+            echo 'Image sizes:'
+            cat artifacts/IMAGE-SIZES.txt
+            echo
             echo 'Reference hardware validation status:'
             echo '  Stage 2.4 hardware validation: PASS'
             echo '  Stage 2.4 persistence validation: PASS'
@@ -343,5 +383,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: meizu-r18-stage2.5-disable-auto-net-rescue
+          name: meizu-r18-stage3-functional-complete
           path: artifacts/

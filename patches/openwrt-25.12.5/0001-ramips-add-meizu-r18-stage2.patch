@@ -347,8 +347,8 @@ index 0000000..c0ffee6
 +++ b/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
 @@ -0,0 +1,10 @@
 +Project=Meizu R18 OpenWrt
-+Stage=3
-+NAME=Functional Complete
++Stage=3.5
++NAME=Upgrade and Stability Validation
 +OpenWrt=25.12.5
 +Kernel=6.12.94
 +Device=meizu_r18
@@ -361,7 +361,7 @@ new file mode 100755
 index 0000000..c0ffee7
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,230 @@
 +#!/bin/sh
 +# Read-only Meizu R18 diagnostics. It intentionally does not alter services,
 +# configuration, or persistent storage.
@@ -385,10 +385,22 @@ index 0000000..c0ffee7
 +}
 +
 +param_value() {
++	# spi-nor debugfs values such as the JEDEC ID and size contain spaces.
++	# Remove only the requested field name(s), then return the complete value.
 +	if [ -n "$2" ]; then
-+		awk -v first="$1" -v second="$2" '$1 == first && $2 == second { print $NF; exit }' "$params" 2>/dev/null
++		awk -v first="$1" -v second="$2" '
++			$1 == first && $2 == second {
++				sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]*/, "")
++				print
++				exit
++			}' "$params" 2>/dev/null
 +	else
-+		awk -v first="$1" '$1 == first { print $NF; exit }' "$params" 2>/dev/null
++		awk -v first="$1" '
++			$1 == first {
++				sub(/^[[:space:]]*[^[:space:]]+[[:space:]]*/, "")
++				print
++				exit
++			}' "$params" 2>/dev/null
 +	fi
 +}
 +
@@ -409,6 +421,12 @@ index 0000000..c0ffee7
 +		fail "$label expected $expected"
 +	fi
 +}
++
++# Used only by the CI parser regression test after sourcing this file. Normal
++# invocation deliberately continues into the read-only diagnostics below.
++if [ "${R18_HEALTHCHECK_TEST_ONLY:-0}" = 1 ]; then
++	return 0 2>/dev/null || exit 0
++fi
 +
 +echo '=================================================='
 +echo 'Meizu R18 Health Check'
@@ -605,7 +623,7 @@ diff --git a/target/linux/ramips/image/mt76x8.mk b/target/linux/ramips/image/mt7
 index 96b3aeb..2768399 100644
 --- a/target/linux/ramips/image/mt76x8.mk
 +++ b/target/linux/ramips/image/mt76x8.mk
-@@ -104,6 +104,42 @@ define Device/asus_rt-ac1200-v2
+@@ -104,6 +104,43 @@ define Device/asus_rt-ac1200-v2
  endef
  TARGET_DEVICES += asus_rt-ac1200-v2
  
@@ -613,14 +631,15 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 3 Functional Complete
++  DEVICE_VARIANT := Stage 3.5 Upgrade and Stability Validation
 +  DEVICE_PACKAGES := kmod-mt76 kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
-+  # Recovery is the only full-firmware artifact.  It intentionally has no
-+  # sysupgrade metadata and must not be used without hardware validation.
++  # Recovery is the only full-firmware artifact and intentionally has no
++  # metadata. Sysupgrade remains compact, but carries normal OpenWrt metadata
++  # so MT76x8 can verify meizu,r18 before writing only the firmware partition.
 +  IMAGES += recovery.bin
 +  IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size
-+  IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size
++  IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size | append-metadata
 +endef
 +TARGET_DEVICES += meizu_r18
 +

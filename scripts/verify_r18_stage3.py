@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the Stage 3 Meizu R18 functional-complete image contract."""
+"""Verify the Stage 3.5 Meizu R18 upgrade-and-stability image contract."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ WIFI_DEFAULTS = "target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-w
 HEALTHCHECK = "target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck"
 BUILD_INFO = "target/linux/ramips/mt76x8/base-files/etc/r18-build-info"
 IMAGE_MK = "target/linux/ramips/image/mt76x8.mk"
+UPGRADE_PLATFORM = "target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh"
 ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
     "etc/uci-defaults/98-r18-net-rescue-disable",
@@ -64,7 +65,7 @@ def require_all(text: str, items: tuple[str, ...], label: str) -> None:
         require(item in text, f"{label} lacks required content: {item}")
 
 
-def verify_source(stage_patch: Path, generated_patch: Path, config: Path) -> None:
+def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrade_platform: Path) -> None:
     text = read_text(stage_patch, "managed Stage patch")
     verify_stage_patch(stage_patch)
     verify_generated_patch(generated_patch)
@@ -84,7 +85,7 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path) -> Non
         ),
         "R18 build configuration",
     )
-    passed("Stage 3 selects LuCI and the MT76/MT7662 driver chain (kmod-mt76x2 provides mt76x2e)")
+    passed("Stage 3.5 retains LuCI and the MT76/MT7662 driver chain (kmod-mt76x2 provides mt76x2e)")
 
     dts = section_for(text, DT)
     require_all(
@@ -132,15 +133,15 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path) -> Non
             "2g)",
             "5g)",
         ),
-        "Stage 3 wireless defaults",
+        "Stage 3.5 wireless defaults",
     )
-    require("R18-OpenWrt-Test" not in wifi, "Stage 3 must not retain the test SSID")
+    require("R18-OpenWrt-Test" not in wifi, "Stage 3.5 must not retain the test SSID")
     require("key='" not in wifi and 'key="literal' not in wifi, "wireless defaults contain a literal PSK")
     passed("2.4 GHz and 5 GHz first-boot LAN AP defaults are present without a public PSK")
 
     defaults = section_for(text, DEFAULTS)
-    require_all(defaults, ("Meizu-R18", "luci.main.lang='zh_cn'"), "Stage 3 system defaults")
-    passed("Stage 3 hostname and Chinese LuCI defaults are present")
+    require_all(defaults, ("Meizu-R18", "luci.main.lang='zh_cn'"), "Stage 3.5 system defaults")
+    passed("Stage 3.5 hostname and Chinese LuCI defaults are present")
 
     rescue = section_for(text, RESCUE)
     disable = section_for(text, RESCUE_DISABLE)
@@ -169,24 +170,51 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path) -> Non
         ),
         "r18-healthcheck",
     )
+    require_all(
+        health,
+        (
+            "Remove only the requested field name(s), then return the complete value.",
+            "sub(/^[[:space:]]*[^[:space:]]+[[:space:]]*/, \"\")",
+            "sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]*/, \"\")",
+            "R18_HEALTHCHECK_TEST_ONLY",
+        ),
+        "r18-healthcheck full-value parser",
+    )
     for prohibited in ("reboot", "firstboot", "jffs2reset", "mtd erase", "mtd write", "network restart", "wifi reload", "uci set"):
         require(prohibited not in health, f"r18-healthcheck contains prohibited state-changing command: {prohibited}")
-    passed("r18-healthcheck remains read-only and covers board, MTD, WAN, and both radios")
+    passed("r18-healthcheck parses full SPI values and remains read-only")
 
     build_info = section_for(text, BUILD_INFO)
     require_all(
         build_info,
         (
-            "Stage=3",
-            "NAME=Functional Complete",
+            "Stage=3.5",
+            "NAME=Upgrade and Stability Validation",
             "SPI_NOR_PAGE_SIZE_FIX=256",
             "NET_RESCUE_AUTOSTART=disabled",
         ),
-        "Stage 3 build identity",
+        "Stage 3.5 build identity",
     )
     image = section_for(text, IMAGE_MK)
-    require("DEVICE_VARIANT := Stage 3 Functional Complete" in image, "R18 image variant is not Stage 3")
-    passed("Stage 3 build identity is selected")
+    require(
+        "DEVICE_VARIANT := Stage 3.5 Upgrade and Stability Validation" in image,
+        "R18 image variant is not Stage 3.5",
+    )
+    require(
+        "IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size | append-metadata" in image,
+        "R18 sysupgrade must be compact and carry standard OpenWrt metadata",
+    )
+    require(
+        "IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size" in image,
+        "R18 recovery rule changed",
+    )
+    passed("Stage 3.5 identity is selected; compact sysupgrade metadata and recovery format are retained")
+
+    platform = read_text(upgrade_platform, "MT76x8 sysupgrade platform")
+    require("PART_NAME=firmware" in platform, "MT76x8 sysupgrade does not target the firmware partition")
+    require("REQUIRE_IMAGE_METADATA=1" in platform, "MT76x8 sysupgrade does not require image metadata")
+    require("default_do_upgrade \"$1\"" in platform, "MT76x8 sysupgrade default write path is missing")
+    passed("sysupgrade targets firmware safely and requires meizu,r18 image metadata")
 
 
 def verify_rootfs(rootfs: Path) -> None:
@@ -200,7 +228,7 @@ def verify_rootfs(rootfs: Path) -> None:
         rootfs / "etc/r18-build-info",
     )
     for path in expected:
-        require(path.is_file(), f"Stage 3 rootfs misses {path.relative_to(rootfs)}")
+        require(path.is_file(), f"Stage 3.5 rootfs misses {path.relative_to(rootfs)}")
     rescue, _, defaults, wifi, health, build_info = expected
     require(rescue.stat().st_mode & 0o111, "r18-net-rescue is not executable in rootfs")
     require(health.stat().st_mode & 0o111, "r18-healthcheck is not executable in rootfs")
@@ -208,16 +236,19 @@ def verify_rootfs(rootfs: Path) -> None:
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
     identity = build_info.read_text(encoding="utf-8")
-    require("Stage=3" in identity and "NAME=Functional Complete" in identity, "rootfs Stage 3 identity is missing")
+    require(
+        "Stage=3.5" in identity and "NAME=Upgrade and Stability Validation" in identity,
+        "rootfs Stage 3.5 identity is missing",
+    )
     enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
     require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")
-    passed("SquashFS readable: Stage 3 defaults are present and r18-net-rescue has no auto-start link")
+    passed("SquashFS readable: Stage 3.5 defaults are present and r18-net-rescue has no auto-start link")
 
 
 def verify_recovery_rootfs(recovery: Path) -> None:
     require(recovery.is_file(), f"R18 recovery image is missing: {recovery}")
     unsquashfs = shutil.which("unsquashfs")
-    require(unsquashfs is not None, "unsquashfs is required for Stage 3 rootfs verification")
+    require(unsquashfs is not None, "unsquashfs is required for Stage 3.5 rootfs verification")
     with recovery.open("rb") as image:
         header = image.read(64)
         require(len(header) == 64, "R18 recovery is shorter than its uImage header")
@@ -253,13 +284,14 @@ def main() -> int:
     parser.add_argument("--stage-patch", type=Path, required=True)
     parser.add_argument("--generated-patch", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--upgrade-platform", type=Path, required=True)
     parser.add_argument("--kernel-tar", type=Path)
     parser.add_argument("--spansion", type=Path)
     parser.add_argument("--recovery", type=Path)
     args = parser.parse_args()
 
     try:
-        verify_source(args.stage_patch, args.generated_patch, args.config)
+        verify_source(args.stage_patch, args.generated_patch, args.config, args.upgrade_platform)
         if args.kernel_tar:
             verify_kernel_patch_application(args.generated_patch, args.kernel_tar)
         if args.spansion:
@@ -271,7 +303,7 @@ def main() -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print("Stage 3 source verification: PASS")
+    print("Stage 3.5 source verification: PASS")
     return 0
 
 

@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 3 - Functional Complete
+name: Meizu R18 Stage 3.5 - Upgrade and Stability Validation
 
 on:
   workflow_dispatch:
@@ -10,6 +10,8 @@ on:
       - 'scripts/verify_r18_stage24.py'
       - 'scripts/verify_r18_stage25.py'
       - 'scripts/verify_r18_stage3.py'
+      - 'scripts/test_r18_healthcheck_parser.sh'
+      - 'docs/STAGE3_5_UPGRADE_STABILITY.md'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -100,15 +102,15 @@ jobs:
           check_fixed 'rescue START=99' 'START=99' "$rescue"
           check_fixed 'rescue procd enabled' 'USE_PROCD=1' "$rescue"
           check_fixed 'rescue delay = 180' 'sleep 180' "$worker"
-          check_fixed 'Stage 3 2.4 GHz SSID' 'R18-OpenWrt' "$wifi"
-          check_fixed 'Stage 3 5 GHz SSID' 'R18-OpenWrt-5G' "$wifi"
-          check_fixed 'Stage 3 Wi-Fi LAN membership' 'wireless.$section.network=lan' "$wifi"
+          check_fixed 'Stage 3.5 2.4 GHz SSID' 'R18-OpenWrt' "$wifi"
+          check_fixed 'Stage 3.5 5 GHz SSID' 'R18-OpenWrt-5G' "$wifi"
+          check_fixed 'Stage 3.5 Wi-Fi LAN membership' 'wireless.$section.network=lan' "$wifi"
           check_fixed 'recovery image padding' 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
           check_fixed 'r18 pad-to-FF image helper' 'define Build/r18-pad-to-ff' "$image"
           check_absent 'recovery image must not contain sysupgrade metadata' '^  IMAGE/recovery\.bin .*append-metadata' "$image"
-          check_fixed 'compact sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size' "$image"
+          check_fixed 'compact metadata-verified sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size | append-metadata' "$image"
 
-      - name: Verify Stage 3 source defaults
+      - name: Verify Stage 3.5 source defaults
         run: |
           set -eu
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
@@ -118,7 +120,7 @@ jobs:
           health=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
           build_info=openwrt/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
           for file in "$rescue" "$disable" "$defaults" "$wifi" "$health" "$build_info"; do
-            test -f "$file" || { echo "::error::Missing Stage 3 file: $file"; exit 1; }
+            test -f "$file" || { echo "::error::Missing Stage 3.5 file: $file"; exit 1; }
           done
           test -x "$rescue" || { echo "::error::r18-net-rescue is not executable"; exit 1; }
           test -x "$health" || { echo "::error::r18-healthcheck is not executable"; exit 1; }
@@ -127,8 +129,9 @@ jobs:
           sh -n "$defaults"
           sh -n "$wifi"
           sh -n "$health"
+          sh scripts/test_r18_healthcheck_parser.sh "$health"
           grep -Fq '/etc/init.d/r18-net-rescue disable' "$disable" || {
-            echo '::error::Stage 3 rescue disable hook is missing'
+            echo '::error::Stage 3.5 rescue disable hook is missing'
             exit 1
           }
           if grep -Fq 'S99r18-net-rescue' ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch; then
@@ -138,8 +141,9 @@ jobs:
           python3 scripts/verify_r18_stage3.py \
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
-            --config configs/r18-initramfs.config
-          echo '[PASS] Stage 3 defaults and healthcheck shell syntax'
+            --config configs/r18-initramfs.config \
+            --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh
+          echo '[PASS] Stage 3.5 defaults and healthcheck shell syntax'
 
       - name: Prepare build configuration
         working-directory: openwrt
@@ -205,14 +209,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-
 
-      - name: Inject private Stage 3 Wi-Fi PSK
+      - name: Inject private Stage 3.5 Wi-Fi PSK
         env:
           R18_WIFI_PSK: ${{ secrets.R18_WIFI_PSK }}
           R18_WIFI_TEST_PSK: ${{ secrets.R18_WIFI_TEST_PSK }}
         run: |
           psk="${R18_WIFI_PSK:-$R18_WIFI_TEST_PSK}"
           test -n "$psk" || { echo 'R18_WIFI_PSK or legacy R18_WIFI_TEST_PSK secret is required'; exit 1; }
-          test "${#psk}" -ge 8 || { echo 'Stage 3 Wi-Fi PSK must be at least 8 characters'; exit 1; }
+          test "${#psk}" -ge 8 || { echo 'Stage 3.5 Wi-Fi PSK must be at least 8 characters'; exit 1; }
           install -d -m 0755 openwrt/files/etc
           umask 077
           printf '%s\n' "$psk" > openwrt/files/etc/r18-wifi-psk
@@ -231,13 +235,14 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
-      - name: Verify Stage 3 source and no-fuzz kernel patch
+      - name: Verify Stage 3.5 source and no-fuzz kernel patch
         run: |
           set -eu
           python3 scripts/verify_r18_stage3.py \
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --config configs/r18-initramfs.config \
+            --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
       - name: Build firmware
@@ -285,6 +290,22 @@ jobs:
             exit 1
           }
           echo '[PASS] sysupgrade remains compact'
+          fwtool=openwrt/staging_dir/host/bin/fwtool
+          test -x "$fwtool" || {
+            echo "::error::OpenWrt fwtool is missing: $fwtool"
+            exit 1
+          }
+          sysupgrade_metadata=$(mktemp)
+          trap 'rm -f "$sysupgrade_metadata"' EXIT
+          "$fwtool" -i "$sysupgrade_metadata" "$sysupgrade" || {
+            echo '::error::R18 sysupgrade metadata could not be extracted'
+            exit 1
+          }
+          grep -Fq 'meizu,r18' "$sysupgrade_metadata" || {
+            echo '::error::R18 sysupgrade metadata does not identify meizu,r18'
+            exit 1
+          }
+          echo '[PASS] sysupgrade metadata identifies meizu,r18'
           python3 scripts/verify_r18_recovery.py "$recovery"
           cp "$initramfs" "$sysupgrade" "$recovery" artifacts/
           cp "$recovery" artifacts/meizu_r18.bin
@@ -304,6 +325,7 @@ jobs:
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --config configs/r18-initramfs.config \
+            --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
             --recovery "$recovery"
           python3 - "$recovery" "$sysupgrade" <<'PY' > artifacts/IMAGE-SIZES.txt
           import struct
@@ -325,7 +347,7 @@ jobs:
           print('rootfs_data offset: 0x00650000')
           PY
           cat artifacts/IMAGE-SIZES.txt
-          printf '%s\n' 'Stage 3 - Functional Complete: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any flash operation.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Stage 3.5 - Upgrade and Stability Validation: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any flash operation.' > artifacts/NOT-FOR-FLASHING.txt
 
       - name: Generate build metadata
         run: |
@@ -340,7 +362,7 @@ jobs:
           )
           {
             echo 'Project: Meizu R18 OpenWrt'
-            echo 'Stage: 3 - Functional Complete'
+            echo 'Stage: 3.5 - Upgrade and Stability Validation'
             echo 'OpenWrt: 25.12.5'
             echo 'Kernel: 6.12.94'
             echo 'Target: ramips/mt76x8'
@@ -383,5 +405,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: meizu-r18-stage3-functional-complete
+          name: meizu-r18-stage3.5-upgrade-stability
           path: artifacts/

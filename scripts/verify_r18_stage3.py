@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the Stage 3.5 Meizu R18 upgrade-and-stability image contract."""
+"""Verify the Stage 4 Meizu R18 release-candidate image contract."""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ HEALTHCHECK = "target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck"
 BUILD_INFO = "target/linux/ramips/mt76x8/base-files/etc/r18-build-info"
 IMAGE_MK = "target/linux/ramips/image/mt76x8.mk"
 UPGRADE_PLATFORM = "target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh"
+ARGON_DEPENDS = "+USE_APK:wget-any +!USE_APK:wget +jsonfilter"
+LIQUID_DEPENDS = "+luci-base"
 ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
     "etc/uci-defaults/98-r18-net-rescue-disable",
@@ -41,6 +43,9 @@ ROOTFS_PATHS = (
     "usr/sbin/r18-healthcheck",
     "etc/r18-build-info",
     "etc/rc.d",
+    "www/luci-static/bootstrap",
+    "www/luci-static/argon",
+    "www/luci-static/liquid",
 )
 
 
@@ -65,7 +70,15 @@ def require_all(text: str, items: tuple[str, ...], label: str) -> None:
         require(item in text, f"{label} lacks required content: {item}")
 
 
-def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrade_platform: Path) -> None:
+def verify_source(
+    stage_patch: Path,
+    generated_patch: Path,
+    config: Path,
+    upgrade_platform: Path,
+    theme_lock: Path,
+    argon_package: Path,
+    liquid_package: Path,
+) -> None:
     text = read_text(stage_patch, "managed Stage patch")
     verify_stage_patch(stage_patch)
     verify_generated_patch(generated_patch)
@@ -82,10 +95,15 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrad
             "CONFIG_PACKAGE_luci=y",
             "CONFIG_PACKAGE_luci-app-firewall=y",
             "CONFIG_PACKAGE_luci-app-package-manager=y",
+            "CONFIG_PACKAGE_luci-theme-bootstrap=y",
+            "CONFIG_PACKAGE_luci-theme-argon=y",
+            "CONFIG_PACKAGE_luci-theme-liquid=y",
         ),
         "R18 build configuration",
     )
-    passed("Stage 3.5 retains LuCI and the MT76/MT7662 driver chain (kmod-mt76x2 provides mt76x2e)")
+    require("CONFIG_PACKAGE_luci-app-argon-config=y" not in config_text, "Argon Config must not be selected")
+    require("CONFIG_PACKAGE_wget-nossl=y" not in config_text, "R18 must not select wget-nossl")
+    passed("Stage 4 retains LuCI, Bootstrap, and the MT76/MT7662 driver chain")
 
     dts = section_for(text, DT)
     require_all(
@@ -133,15 +151,24 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrad
             "2g)",
             "5g)",
         ),
-        "Stage 3.5 wireless defaults",
+        "Stage 4 wireless defaults",
     )
-    require("R18-OpenWrt-Test" not in wifi, "Stage 3.5 must not retain the test SSID")
+    require("R18-OpenWrt-Test" not in wifi, "Stage 4 must not retain the test SSID")
     require("key='" not in wifi and 'key="literal' not in wifi, "wireless defaults contain a literal PSK")
     passed("2.4 GHz and 5 GHz first-boot LAN AP defaults are present without a public PSK")
 
     defaults = section_for(text, DEFAULTS)
-    require_all(defaults, ("Meizu-R18", "luci.main.lang='zh_cn'"), "Stage 3.5 system defaults")
-    passed("Stage 3.5 hostname and Chinese LuCI defaults are present")
+    require_all(
+        defaults,
+        (
+            "Meizu-R18",
+            "luci.main.lang='zh_cn'",
+            'if [ -z "$(uci -q get luci.main.mediaurlbase)" ]; then',
+            "luci.main.mediaurlbase='/luci-static/liquid'",
+        ),
+        "Stage 4 system defaults",
+    )
+    passed("Stage 4 clean installs select Liquid without overwriting a retained theme")
 
     rescue = section_for(text, RESCUE)
     disable = section_for(text, RESCUE_DISABLE)
@@ -184,21 +211,50 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrad
         require(prohibited not in health, f"r18-healthcheck contains prohibited state-changing command: {prohibited}")
     passed("r18-healthcheck parses full SPI values and remains read-only")
 
+    lock = read_text(theme_lock, "Stage 4 theme lock")
+    require_all(
+        lock,
+        (
+            "ARGON_SOURCE=https://github.com/jerrykuku/luci-theme-argon.git",
+            "ARGON_VERSION=2.4.6-20260731",
+            "ARGON_COMMIT=86c3156bab0ee2b8c91af68b3fa4655f2df51d09",
+            "LIQUID_SOURCE=https://github.com/zzsj0928/luci-theme-liquid.git",
+            "LIQUID_VERSION=0.6-r18",
+            "LIQUID_COMMIT=bd2de4f9493418944b378c0f284656d4bfdc3242",
+        ),
+        "Stage 4 theme lock",
+    )
+    argon = read_text(argon_package, "pinned Argon Makefile")
+    liquid = read_text(liquid_package, "pinned Liquid Makefile")
+    require("LUCI_TITLE:=Argon Theme" in argon, "pinned Argon package is not luci-theme-argon")
+    require(f"LUCI_DEPENDS:={ARGON_DEPENDS}" in argon, "Argon dependency audit changed")
+    require("wget-nossl" not in argon, "Argon must not select wget-nossl")
+    require("luci-app-argon-config" not in argon, "Argon theme must not depend on Argon Config")
+    require("LUCI_TITLE:=Liquid glass theme for LuCI" in liquid, "pinned Liquid package is not luci-theme-liquid")
+    require(f"LUCI_DEPENDS:={LIQUID_DEPENDS}" in liquid, "Liquid dependency audit changed")
+    require("node" not in liquid.lower() and "python" not in liquid.lower() and "php" not in liquid.lower(), "Liquid Makefile pulls a prohibited runtime")
+    passed("Bootstrap retained; Argon and Liquid sources are pinned and dependency-audited")
+
     build_info = section_for(text, BUILD_INFO)
     require_all(
         build_info,
         (
-            "Stage=3.5",
-            "NAME=Upgrade and Stability Validation",
+            "Stage=4",
+            "NAME=Release Candidate",
+            "OPENWRT=25.12.5",
+            "KERNEL=6.12.94",
+            "BOARD=meizu,r18",
             "SPI_NOR_PAGE_SIZE_FIX=256",
             "NET_RESCUE_AUTOSTART=disabled",
+            "DEFAULT_LUCI_THEME=Liquid",
+            "THEMES=Liquid,Argon,Bootstrap",
         ),
-        "Stage 3.5 build identity",
+        "Stage 4 build identity",
     )
     image = section_for(text, IMAGE_MK)
     require(
-        "DEVICE_VARIANT := Stage 3.5 Upgrade and Stability Validation" in image,
-        "R18 image variant is not Stage 3.5",
+        "DEVICE_VARIANT := Stage 4 Release Candidate" in image,
+        "R18 image variant is not Stage 4",
     )
     require(
         "IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size | append-metadata" in image,
@@ -208,7 +264,7 @@ def verify_source(stage_patch: Path, generated_patch: Path, config: Path, upgrad
         "IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size" in image,
         "R18 recovery rule changed",
     )
-    passed("Stage 3.5 identity is selected; compact sysupgrade metadata and recovery format are retained")
+    passed("Stage 4 identity is selected; compact sysupgrade metadata and recovery format are retained")
 
     platform = read_text(upgrade_platform, "MT76x8 sysupgrade platform")
     require("PART_NAME=firmware" in platform, "MT76x8 sysupgrade does not target the firmware partition")
@@ -226,10 +282,13 @@ def verify_rootfs(rootfs: Path) -> None:
         rootfs / "etc/uci-defaults/99-r18-wifi-defaults",
         rootfs / "usr/sbin/r18-healthcheck",
         rootfs / "etc/r18-build-info",
+        rootfs / "www/luci-static/bootstrap",
+        rootfs / "www/luci-static/argon",
+        rootfs / "www/luci-static/liquid",
     )
     for path in expected:
-        require(path.is_file(), f"Stage 3.5 rootfs misses {path.relative_to(rootfs)}")
-    rescue, _, defaults, wifi, health, build_info = expected
+        require(path.exists(), f"Stage 4 rootfs misses {path.relative_to(rootfs)}")
+    rescue, _, defaults, wifi, health, build_info, bootstrap, argon, liquid = expected
     require(rescue.stat().st_mode & 0o111, "r18-net-rescue is not executable in rootfs")
     require(health.stat().st_mode & 0o111, "r18-healthcheck is not executable in rootfs")
     require("Meizu-R18" in defaults.read_text(encoding="utf-8"), "rootfs hostname default is missing")
@@ -237,18 +296,19 @@ def verify_rootfs(rootfs: Path) -> None:
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
     identity = build_info.read_text(encoding="utf-8")
     require(
-        "Stage=3.5" in identity and "NAME=Upgrade and Stability Validation" in identity,
-        "rootfs Stage 3.5 identity is missing",
+        "Stage=4" in identity and "NAME=Release Candidate" in identity and "DEFAULT_LUCI_THEME=Liquid" in identity,
+        "rootfs Stage 4 identity is missing",
     )
+    require(bootstrap.is_dir() and argon.is_dir() and liquid.is_dir(), "one or more LuCI theme asset directories are missing")
     enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
     require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")
-    passed("SquashFS readable: Stage 3.5 defaults are present and r18-net-rescue has no auto-start link")
+    passed("SquashFS readable: Stage 4 themes/defaults are present and r18-net-rescue has no auto-start link")
 
 
 def verify_recovery_rootfs(recovery: Path) -> None:
     require(recovery.is_file(), f"R18 recovery image is missing: {recovery}")
     unsquashfs = shutil.which("unsquashfs")
-    require(unsquashfs is not None, "unsquashfs is required for Stage 3.5 rootfs verification")
+    require(unsquashfs is not None, "unsquashfs is required for Stage 4 rootfs verification")
     with recovery.open("rb") as image:
         header = image.read(64)
         require(len(header) == 64, "R18 recovery is shorter than its uImage header")
@@ -285,13 +345,24 @@ def main() -> int:
     parser.add_argument("--generated-patch", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--upgrade-platform", type=Path, required=True)
+    parser.add_argument("--theme-lock", type=Path, required=True)
+    parser.add_argument("--argon-package", type=Path, required=True)
+    parser.add_argument("--liquid-package", type=Path, required=True)
     parser.add_argument("--kernel-tar", type=Path)
     parser.add_argument("--spansion", type=Path)
     parser.add_argument("--recovery", type=Path)
     args = parser.parse_args()
 
     try:
-        verify_source(args.stage_patch, args.generated_patch, args.config, args.upgrade_platform)
+        verify_source(
+            args.stage_patch,
+            args.generated_patch,
+            args.config,
+            args.upgrade_platform,
+            args.theme_lock,
+            args.argon_package,
+            args.liquid_package,
+        )
         if args.kernel_tar:
             verify_kernel_patch_application(args.generated_patch, args.kernel_tar)
         if args.spansion:
@@ -303,7 +374,7 @@ def main() -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print("Stage 3.5 source verification: PASS")
+    print("Stage 4 source verification: PASS")
     return 0
 
 

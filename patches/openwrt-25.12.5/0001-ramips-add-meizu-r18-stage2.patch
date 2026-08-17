@@ -164,15 +164,18 @@ new file mode 100755
 index 0000000..c0ffee8
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,15 @@
 +#!/bin/sh
-+# First boot only: leave regional settings to the owner, but provide a
-+# recognisable router hostname and the requested Chinese LuCI default.
++# First boot only. Keep a pre-existing theme choice during a settings-preserved
++# sysupgrade, but select Liquid for a clean install.
 +
 +[ "$(board_name)" = 'meizu,r18' ] || exit 0
 +
 +uci set system.@system[0].hostname='Meizu-R18'
 +uci set luci.main.lang='zh_cn'
++if [ -z "$(uci -q get luci.main.mediaurlbase)" ]; then
++	uci set luci.main.mediaurlbase='/luci-static/liquid'
++fi
 +uci commit system
 +uci commit luci
 +
@@ -345,17 +348,22 @@ new file mode 100644
 index 0000000..c0ffee6
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,15 @@
 +Project=Meizu R18 OpenWrt
-+Stage=3.5
-+NAME=Upgrade and Stability Validation
++Stage=4
++NAME=Release Candidate
 +OpenWrt=25.12.5
 +Kernel=6.12.94
++OPENWRT=25.12.5
++KERNEL=6.12.94
 +Device=meizu_r18
++BOARD=meizu,r18
 +SPI_NOR=s25fl128s1
 +SPI_NOR_JEDEC=01 20 18 4d 01 80
 +SPI_NOR_PAGE_SIZE_FIX=256
 +NET_RESCUE_AUTOSTART=disabled
++DEFAULT_LUCI_THEME=Liquid
++THEMES=Liquid,Argon,Bootstrap
 diff --git a/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
 new file mode 100755
 index 0000000..c0ffee7
@@ -631,7 +639,7 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 3.5 Upgrade and Stability Validation
++  DEVICE_VARIANT := Stage 4 Release Candidate
 +  DEVICE_PACKAGES := kmod-mt76 kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
 +  # Recovery is the only full-firmware artifact and intentionally has no

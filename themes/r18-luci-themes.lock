@@ -1,0 +1,9 @@
+# Stage 4 theme sources are fetched by commit, never by an unpinned branch tip.
+# The package Makefiles are audited in CI before OpenWrt defconfig/build.
+ARGON_SOURCE=https://github.com/jerrykuku/luci-theme-argon.git
+ARGON_VERSION=2.4.6-20260731
+ARGON_COMMIT=86c3156bab0ee2b8c91af68b3fa4655f2df51d09
+
+LIQUID_SOURCE=https://github.com/zzsj0928/luci-theme-liquid.git
+LIQUID_VERSION=0.6-r18
+LIQUID_COMMIT=bd2de4f9493418944b378c0f284656d4bfdc3242

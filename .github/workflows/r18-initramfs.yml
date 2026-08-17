@@ -1,4 +1,4 @@
-name: Meizu R18 Stage 3.5 - Upgrade and Stability Validation
+name: Meizu R18 Stage 4 - Release Candidate
 
 on:
   workflow_dispatch:
@@ -12,6 +12,8 @@ on:
       - 'scripts/verify_r18_stage3.py'
       - 'scripts/test_r18_healthcheck_parser.sh'
       - 'docs/STAGE3_5_UPGRADE_STABILITY.md'
+      - 'docs/**'
+      - 'themes/r18-luci-themes.lock'
       - '.github/workflows/r18-initramfs.yml'
 
 permissions:
@@ -43,6 +45,38 @@ jobs:
           git -C openwrt apply ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch
           git -C openwrt diff --check
 
+      - name: Fetch pinned LuCI themes
+        run: |
+          set -eu
+          . themes/r18-luci-themes.lock
+          fetch_theme() {
+            name="$1"
+            source="$2"
+            commit="$3"
+            directory="$4"
+            test ! -e "$directory" || {
+              echo "::error::theme directory unexpectedly exists: $directory"
+              exit 1
+            }
+            mkdir -p "$(dirname "$directory")"
+            git init -q "$directory"
+            git -C "$directory" remote add origin "$source"
+            git -C "$directory" fetch --depth=1 origin "$commit"
+            git -C "$directory" checkout -q --detach FETCH_HEAD
+            actual="$(git -C "$directory" rev-parse HEAD)"
+            test "$actual" = "$commit" || {
+              echo "::error::$name pin mismatch: expected $commit, got $actual"
+              exit 1
+            }
+            test -f "$directory/Makefile" || {
+              echo "::error::$name Makefile is missing"
+              exit 1
+            }
+            echo "[PASS] $name source pinned at $actual"
+          }
+          fetch_theme Argon "$ARGON_SOURCE" "$ARGON_COMMIT" openwrt/package/r18-luci-themes/luci-theme-argon
+          fetch_theme Liquid "$LIQUID_SOURCE" "$LIQUID_COMMIT" openwrt/package/r18-luci-themes/luci-theme-liquid
+
       - name: Restore OpenWrt downloads cache
         uses: actions/cache@v4
         with:
@@ -59,6 +93,8 @@ jobs:
           worker=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-net-rescue-worker
           wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
           image=openwrt/target/linux/ramips/image/mt76x8.mk
+          argon=openwrt/package/r18-luci-themes/luci-theme-argon/Makefile
+          liquid=openwrt/package/r18-luci-themes/luci-theme-liquid/Makefile
           check_fixed() {
             desc="$1"
             pattern="$2"
@@ -99,18 +135,20 @@ jobs:
           check_fixed 'R18 Ethernet mapping' '"1:lan:1" "3:lan:2" "4:wan" "6@eth0"' "$network"
           check_file 'r18-net-rescue' "$rescue"
           check_file 'r18-net-rescue worker' "$worker"
+          check_file 'pinned Argon Makefile' "$argon"
+          check_file 'pinned Liquid Makefile' "$liquid"
           check_fixed 'rescue START=99' 'START=99' "$rescue"
           check_fixed 'rescue procd enabled' 'USE_PROCD=1' "$rescue"
           check_fixed 'rescue delay = 180' 'sleep 180' "$worker"
-          check_fixed 'Stage 3.5 2.4 GHz SSID' 'R18-OpenWrt' "$wifi"
-          check_fixed 'Stage 3.5 5 GHz SSID' 'R18-OpenWrt-5G' "$wifi"
-          check_fixed 'Stage 3.5 Wi-Fi LAN membership' 'wireless.$section.network=lan' "$wifi"
+          check_fixed 'Stage 4 2.4 GHz SSID' 'R18-OpenWrt' "$wifi"
+          check_fixed 'Stage 4 5 GHz SSID' 'R18-OpenWrt-5G' "$wifi"
+          check_fixed 'Stage 4 Wi-Fi LAN membership' 'wireless.$section.network=lan' "$wifi"
           check_fixed 'recovery image padding' 'IMAGE/recovery.bin := append-kernel | append-rootfs | pad-rootfs | r18-pad-to-ff $$(IMAGE_SIZE) | check-size' "$image"
           check_fixed 'r18 pad-to-FF image helper' 'define Build/r18-pad-to-ff' "$image"
           check_absent 'recovery image must not contain sysupgrade metadata' '^  IMAGE/recovery\.bin .*append-metadata' "$image"
           check_fixed 'compact metadata-verified sysupgrade image rule' 'IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | check-size | append-metadata' "$image"
 
-      - name: Verify Stage 3.5 source defaults
+      - name: Verify Stage 4 source defaults
         run: |
           set -eu
           rescue=openwrt/target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue
@@ -120,7 +158,7 @@ jobs:
           health=openwrt/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
           build_info=openwrt/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
           for file in "$rescue" "$disable" "$defaults" "$wifi" "$health" "$build_info"; do
-            test -f "$file" || { echo "::error::Missing Stage 3.5 file: $file"; exit 1; }
+            test -f "$file" || { echo "::error::Missing Stage 4 file: $file"; exit 1; }
           done
           test -x "$rescue" || { echo "::error::r18-net-rescue is not executable"; exit 1; }
           test -x "$health" || { echo "::error::r18-healthcheck is not executable"; exit 1; }
@@ -131,7 +169,7 @@ jobs:
           sh -n "$health"
           sh scripts/test_r18_healthcheck_parser.sh "$health"
           grep -Fq '/etc/init.d/r18-net-rescue disable' "$disable" || {
-            echo '::error::Stage 3.5 rescue disable hook is missing'
+            echo '::error::Stage 4 rescue disable hook is missing'
             exit 1
           }
           if grep -Fq 'S99r18-net-rescue' ../patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch; then
@@ -142,8 +180,11 @@ jobs:
             --stage-patch patches/openwrt-25.12.5/0001-ramips-add-meizu-r18-stage2.patch \
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --config configs/r18-initramfs.config \
-            --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh
-          echo '[PASS] Stage 3.5 defaults and healthcheck shell syntax'
+            --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
+            --theme-lock themes/r18-luci-themes.lock \
+            --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --liquid-package openwrt/package/r18-luci-themes/luci-theme-liquid/Makefile
+          echo '[PASS] Stage 4 defaults, themes, and healthcheck shell syntax'
 
       - name: Prepare build configuration
         working-directory: openwrt
@@ -196,27 +237,39 @@ jobs:
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' 'luci-i18n-base-zh-cn'
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y' 'luci-i18n-firewall-zh-cn'
           require_luci_config 'CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y' 'luci-i18n-package-manager-zh-cn'
+          require_luci_config 'CONFIG_PACKAGE_luci-theme-bootstrap=y' 'luci-theme-bootstrap'
+          require_luci_config 'CONFIG_PACKAGE_luci-theme-argon=y' 'luci-theme-argon'
+          require_luci_config 'CONFIG_PACKAGE_luci-theme-liquid=y' 'luci-theme-liquid'
           require_luci_config 'CONFIG_PACKAGE_kmod-mt76=y' 'kmod-mt76'
           require_luci_config 'CONFIG_PACKAGE_kmod-mt76-core=y' 'kmod-mt76-core'
           require_luci_config 'CONFIG_PACKAGE_kmod-mt76x2-common=y' 'kmod-mt76x2-common'
           require_luci_config 'CONFIG_PACKAGE_kmod-mt76x2=y' 'kmod-mt76x2 (contains mt76x2e)'
+          grep -Fx 'CONFIG_PACKAGE_luci-app-argon-config=y' .config && {
+            echo '::error::luci-app-argon-config must not be selected'
+            exit 1
+          } || true
+          grep -Fx 'CONFIG_PACKAGE_wget-nossl=y' .config && {
+            echo '::error::wget-nossl must not be selected by the theme build'
+            exit 1
+          } || true
+          echo '[PASS] Argon Config and wget-nossl are absent'
 
       - name: Restore OpenWrt compiler cache
         uses: actions/cache@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-${{ hashFiles('configs/r18-initramfs.config', 'patches/openwrt-25.12.5/**') }}
+          key: ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-${{ hashFiles('configs/r18-initramfs.config', 'patches/openwrt-25.12.5/**', 'themes/r18-luci-themes.lock') }}
           restore-keys: |
             ${{ runner.os }}-openwrt-v25.12.5-r18-ccache-v1-
 
-      - name: Inject private Stage 3.5 Wi-Fi PSK
+      - name: Inject private Stage 4 Wi-Fi PSK
         env:
           R18_WIFI_PSK: ${{ secrets.R18_WIFI_PSK }}
           R18_WIFI_TEST_PSK: ${{ secrets.R18_WIFI_TEST_PSK }}
         run: |
           psk="${R18_WIFI_PSK:-$R18_WIFI_TEST_PSK}"
           test -n "$psk" || { echo 'R18_WIFI_PSK or legacy R18_WIFI_TEST_PSK secret is required'; exit 1; }
-          test "${#psk}" -ge 8 || { echo 'Stage 3.5 Wi-Fi PSK must be at least 8 characters'; exit 1; }
+          test "${#psk}" -ge 8 || { echo 'Stage 4 Wi-Fi PSK must be at least 8 characters'; exit 1; }
           install -d -m 0755 openwrt/files/etc
           umask 077
           printf '%s\n' "$psk" > openwrt/files/etc/r18-wifi-psk
@@ -235,7 +288,7 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
-      - name: Verify Stage 3.5 source and no-fuzz kernel patch
+      - name: Verify Stage 4 source and no-fuzz kernel patch
         run: |
           set -eu
           python3 scripts/verify_r18_stage3.py \
@@ -243,6 +296,9 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --config configs/r18-initramfs.config \
             --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
+            --theme-lock themes/r18-luci-themes.lock \
+            --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --liquid-package openwrt/package/r18-luci-themes/luci-theme-liquid/Makefile \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
       - name: Build firmware
@@ -326,6 +382,9 @@ jobs:
             --generated-patch openwrt/target/linux/ramips/patches-6.12/935-mtd-spi-nor-spansion-s25fl128s1-256-byte-page.patch \
             --config configs/r18-initramfs.config \
             --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
+            --theme-lock themes/r18-luci-themes.lock \
+            --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --liquid-package openwrt/package/r18-luci-themes/luci-theme-liquid/Makefile \
             --recovery "$recovery"
           python3 - "$recovery" "$sysupgrade" <<'PY' > artifacts/IMAGE-SIZES.txt
           import struct
@@ -340,14 +399,31 @@ jobs:
               image.seek(kernel_size)
               superblock = image.read(48)
               squashfs_bytes_used = struct.unpack_from('<Q', superblock, 40)[0]
+          rootfs_data_offset = (kernel_size + squashfs_bytes_used + 0xffff) & ~0xffff
+          stage35_kernel = 1951334
+          stage35_squashfs = 4608806
+          stage35_sysupgrade = 6619407
           print(f'kernel bytes: {kernel_size}')
           print(f'squashfs bytes_used: {squashfs_bytes_used}')
           print(f'sysupgrade bytes: {sysupgrade.stat().st_size}')
           print(f'recovery bytes: {recovery.stat().st_size}')
-          print('rootfs_data offset: 0x00650000')
+          print(f'rootfs_data offset: 0x{rootfs_data_offset:08x}')
+          print('Stage 3.5 baseline kernel bytes: 1951334')
+          print('Stage 3.5 baseline squashfs bytes_used: 4608806')
+          print('Stage 3.5 baseline sysupgrade bytes: 6619407')
+          print(f'theme delta kernel bytes: {kernel_size - stage35_kernel:+d}')
+          print(f'theme delta squashfs bytes_used: {squashfs_bytes_used - stage35_squashfs:+d}')
+          print(f'theme delta sysupgrade bytes: {sysupgrade.stat().st_size - stage35_sysupgrade:+d}')
           PY
           cat artifacts/IMAGE-SIZES.txt
-          printf '%s\n' 'Stage 3.5 - Upgrade and Stability Validation: meizu_r18.bin is a full-firmware static recovery candidate only; hardware validation is required before any flash operation.' > artifacts/NOT-FOR-FLASHING.txt
+          printf '%s\n' 'Meizu R18 OpenWrt 25.12.5 Release Candidate: recovery, keep-settings sysupgrade, clean sysupgrade, LAN1/LAN2, dual-band Wi-Fi, LuCI, JFFS2, and the S25FL128S1 fix are hardware-tested. WAN P4 upstream DHCP / Internet physical validation remains pending.' > artifacts/RELEASE-CANDIDATE.txt
+          cat > artifacts/README-FIRST.txt <<'EOF'
+          Meizu R18 OpenWrt 25.12.5 Release Candidate
+
+          Normal OpenWrt upgrade: use *-squashfs-sysupgrade.bin and run sysupgrade -T first.
+          First install or recovery: use meizu_r18.bin with the documented WPS/TFTP procedure.
+          This release candidate is hardware-tested; WAN P4 upstream DHCP / Internet validation is pending.
+          EOF
 
       - name: Generate build metadata
         run: |
@@ -362,7 +438,7 @@ jobs:
           )
           {
             echo 'Project: Meizu R18 OpenWrt'
-            echo 'Stage: 3.5 - Upgrade and Stability Validation'
+            echo 'Stage: 4 - Release Candidate'
             echo 'OpenWrt: 25.12.5'
             echo 'Kernel: 6.12.94'
             echo 'Target: ramips/mt76x8'
@@ -381,6 +457,14 @@ jobs:
             echo '  autostart: disabled'
             echo '  manual service: retained'
             echo
+            echo 'LuCI themes:'
+            echo '  default clean-install theme: Liquid'
+            echo '  installed themes: Liquid, Argon, Bootstrap'
+            echo '  Argon source: https://github.com/jerrykuku/luci-theme-argon.git'
+            echo '  Argon pin: 86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
+            echo '  Liquid source: https://github.com/zzsj0928/luci-theme-liquid.git'
+            echo '  Liquid pin: bd2de4f9493418944b378c0f284656d4bfdc3242'
+            echo
             echo 'Recovery:'
             echo '  expected size: 15728640'
             echo '  firmware range: 0x050000-0xF50000'
@@ -391,8 +475,10 @@ jobs:
             cat artifacts/IMAGE-SIZES.txt
             echo
             echo 'Reference hardware validation status:'
-            echo '  Stage 2.4 hardware validation: PASS'
-            echo '  Stage 2.4 persistence validation: PASS'
+            echo '  Stage 2.4 SPI-NOR/JFFS2 validation: PASS'
+            echo '  Stage 3.5 keep-settings sysupgrade: PASS'
+            echo '  Stage 3.5 clean sysupgrade: PASS'
+            echo '  WAN P4 upstream DHCP / Internet validation: PENDING'
             echo '  Note: these are reference hardware results; CI does not perform hardware validation.'
             echo
             echo 'Images (SHA256):'
@@ -405,5 +491,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: meizu-r18-stage3.5-upgrade-stability
+          name: meizu-r18-stage4-release-candidate
           path: artifacts/

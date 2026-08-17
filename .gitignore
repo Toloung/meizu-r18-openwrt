@@ -17,6 +17,8 @@ references/
 # Private router backups
 R18_Backup*/
 *fullflash*
+*.tar.gz
+*.tgz
 
 # Build outputs
 bin/

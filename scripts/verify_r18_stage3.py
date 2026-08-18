@@ -35,7 +35,6 @@ BUILD_INFO = "target/linux/ramips/mt76x8/base-files/etc/r18-build-info"
 IMAGE_MK = "target/linux/ramips/image/mt76x8.mk"
 UPGRADE_PLATFORM = "target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh"
 ARGON_DEPENDS = "+USE_APK:wget-any +!USE_APK:wget +jsonfilter"
-LIQUID_DEPENDS = "+luci-base"
 ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
     "etc/uci-defaults/98-r18-net-rescue-disable",
@@ -44,10 +43,10 @@ ROOTFS_PATHS = (
     "etc/uci-defaults/99-r18-wifi-defaults",
     "usr/sbin/r18-healthcheck",
     "etc/r18-build-info",
+    "etc/config/luci",
     "etc/rc.d",
     "www/luci-static/bootstrap",
     "www/luci-static/argon",
-    "www/luci-static/liquid",
 )
 
 
@@ -83,7 +82,6 @@ def verify_source(
     upgrade_platform: Path,
     theme_lock: Path,
     argon_package: Path,
-    liquid_package: Path,
 ) -> None:
     text = read_text(stage_patch, "managed Stage patch")
     verify_stage_patch(stage_patch)
@@ -103,13 +101,13 @@ def verify_source(
             "CONFIG_PACKAGE_luci-app-package-manager=y",
             "CONFIG_PACKAGE_luci-theme-bootstrap=y",
             "CONFIG_PACKAGE_luci-theme-argon=y",
-            "CONFIG_PACKAGE_luci-theme-liquid=y",
         ),
         "R18 build configuration",
     )
+    require("CONFIG_PACKAGE_luci-theme-liquid=y" not in config_text, "Liquid must not be selected")
     require("CONFIG_PACKAGE_luci-app-argon-config=y" not in config_text, "Argon Config must not be selected")
     require("CONFIG_PACKAGE_wget-nossl=y" not in config_text, "R18 must not select wget-nossl")
-    passed("Stage 4 retains LuCI, Bootstrap, and the MT76/MT7662 driver chain")
+    passed("Stage 4 RC3 retains LuCI, Bootstrap, Argon, and the MT76/MT7662 driver chain")
 
     dts = section_for(text, DT)
     require_all(
@@ -170,18 +168,17 @@ def verify_source(
         (
             "Meizu-R18",
             "luci.main.lang='zh_cn'",
-            'if [ -z "$(uci -q get luci.main.mediaurlbase)" ]; then',
-            "luci.main.mediaurlbase='/luci-static/liquid'",
         ),
         "Stage 4 system defaults",
     )
+    require("luci.main.mediaurlbase" not in defaults, "R18 defaults must not override LuCI Bootstrap")
     require("/etc/config/luci" in keep_luci, "R18 LuCI config is absent from sysupgrade keep list")
     require(
-        text.count("uci set luci.main.mediaurlbase") == 1,
+        text.count("uci set luci.main.mediaurlbase") == 0,
         "theme selection has an unexpected boot-time override",
     )
     passed("/etc/config/luci explicitly retained by keep-settings")
-    passed("no boot-time theme override; clean default remains Liquid")
+    passed("no boot-time theme override; Bootstrap remains LuCI's clean default")
 
     rescue = section_for(text, RESCUE)
     disable = section_for(text, RESCUE_DISABLE)
@@ -231,25 +228,20 @@ def verify_source(
             "ARGON_SOURCE=https://github.com/jerrykuku/luci-theme-argon.git",
             "ARGON_VERSION=2.4.6-20260731",
             "ARGON_COMMIT=86c3156bab0ee2b8c91af68b3fa4655f2df51d09",
-            "LIQUID_SOURCE=https://github.com/zzsj0928/luci-theme-liquid.git",
-            "LIQUID_VERSION=0.6-r18",
-            "LIQUID_COMMIT=bd2de4f9493418944b378c0f284656d4bfdc3242",
         ),
         "Stage 4 theme lock",
     )
     argon = read_text(argon_package, "pinned Argon Makefile")
-    liquid = read_text(liquid_package, "pinned Liquid Makefile")
     require("LUCI_TITLE:=Argon Theme" in argon, "pinned Argon package is not luci-theme-argon")
     require(f"LUCI_DEPENDS:={ARGON_DEPENDS}" in argon, "Argon dependency audit changed")
     require("wget-nossl" not in argon, "Argon must not select wget-nossl")
     require("luci-app-argon-config" not in argon, "Argon theme must not depend on Argon Config")
-    require("LUCI_TITLE:=Liquid glass theme for LuCI" in liquid, "pinned Liquid package is not luci-theme-liquid")
-    require(f"LUCI_DEPENDS:={LIQUID_DEPENDS}" in liquid, "Liquid dependency audit changed")
-    require("node" not in liquid.lower() and "python" not in liquid.lower() and "php" not in liquid.lower(), "Liquid Makefile pulls a prohibited runtime")
-    passed("Bootstrap retained")
-    passed("Argon retained")
-    passed("Liquid retained")
-    passed("Argon and Liquid sources are pinned and dependency-audited")
+    require("LIQUID_" not in lock and "luci-theme-liquid" not in lock, "Liquid source pin must be absent")
+    passed("Bootstrap installed")
+    passed("Argon source pinned")
+    passed("Liquid absent")
+    passed("wget-nossl absent")
+    passed("argon-config absent")
 
     build_info = section_for(text, BUILD_INFO)
     require("@@ -0,0 +1,16 @@" in build_info, "r18-build-info patch hunk must declare all 16 lines")
@@ -263,15 +255,15 @@ def verify_source(
             "BOARD=meizu,r18",
             "SPI_NOR_PAGE_SIZE_FIX=256",
             "NET_RESCUE_AUTOSTART=disabled",
-            "DEFAULT_LUCI_THEME=Liquid",
-            "THEMES=Liquid,Argon,Bootstrap",
-            "RELEASE_CANDIDATE=v0.4.0-rc2",
+            "DEFAULT_LUCI_THEME=Bootstrap",
+            "THEMES=Bootstrap,Argon",
+            "RELEASE_CANDIDATE=v0.4.0-rc3",
         ),
         "Stage 4 build identity",
     )
     image = section_for(text, IMAGE_MK)
     require(
-        "DEVICE_VARIANT := Stage 4 Release Candidate 2" in image,
+        "DEVICE_VARIANT := Stage 4 Release Candidate 3" in image,
         "R18 image variant is not Stage 4",
     )
     require(
@@ -300,13 +292,13 @@ def verify_rootfs(rootfs: Path) -> None:
         rootfs / "lib/upgrade/keep.d/r18-luci",
         rootfs / "etc/uci-defaults/99-r18-wifi-defaults",
         rootfs / "usr/sbin/r18-healthcheck",
+        rootfs / "etc/config/luci",
         rootfs / "www/luci-static/bootstrap",
         rootfs / "www/luci-static/argon",
-        rootfs / "www/luci-static/liquid",
     )
     for path in expected:
         require(path.exists(), f"Stage 4 rootfs misses {path.relative_to(rootfs)}")
-    rescue, _, defaults, keep_luci, wifi, health, bootstrap, argon, liquid = expected
+    rescue, _, defaults, keep_luci, wifi, health, luci_config, bootstrap, argon = expected
     build_info = rootfs / "etc/r18-build-info"
     require(build_info.is_file(), "final rootfs is missing /etc/r18-build-info")
     passed("final rootfs contains /etc/r18-build-info")
@@ -319,6 +311,10 @@ def verify_rootfs(rootfs: Path) -> None:
     )
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
+    require(
+        "option mediaurlbase '/luci-static/bootstrap'" in luci_config.read_text(encoding="utf-8"),
+        "rootfs LuCI Bootstrap clean default is missing",
+    )
     identity = build_info.read_text(encoding="utf-8")
     for expected_line, label in (
         ("Stage=4", "Stage=4"),
@@ -328,16 +324,16 @@ def verify_rootfs(rootfs: Path) -> None:
         ("BOARD=meizu,r18", "Board=meizu,r18"),
         ("SPI_NOR_PAGE_SIZE_FIX=256", "SPI NOR page-size fix=256"),
         ("NET_RESCUE_AUTOSTART=disabled", "rescue autostart=disabled"),
-        ("DEFAULT_LUCI_THEME=Liquid", "default theme=Liquid"),
-        ("THEMES=Liquid,Argon,Bootstrap", "themes=Liquid,Argon,Bootstrap"),
-        ("RELEASE_CANDIDATE=v0.4.0-rc2", "release candidate=v0.4.0-rc2"),
+        ("DEFAULT_LUCI_THEME=Bootstrap", "default theme=Bootstrap"),
+        ("THEMES=Bootstrap,Argon", "themes=Bootstrap,Argon"),
+        ("RELEASE_CANDIDATE=v0.4.0-rc3", "release candidate=v0.4.0-rc3"),
     ):
         require_exact_line(identity, expected_line, f"rootfs {label}")
         passed(f"rootfs {label}")
-    require(bootstrap.is_dir() and argon.is_dir() and liquid.is_dir(), "one or more LuCI theme asset directories are missing")
+    require(bootstrap.is_dir() and argon.is_dir(), "Bootstrap or Argon theme assets are missing")
     enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
     require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")
-    passed("SquashFS readable: Stage 4 themes/defaults are present and r18-net-rescue has no auto-start link")
+    passed("Bootstrap clean default and Argon are present; r18-net-rescue has no auto-start link")
 
 
 def verify_recovery_rootfs(recovery: Path) -> None:
@@ -371,6 +367,16 @@ def verify_recovery_rootfs(recovery: Path) -> None:
         )
         if result.returncode:
             fail("selective unsquashfs failed: " + (result.stdout + result.stderr).strip())
+        listing = subprocess.run(
+            [unsquashfs, "-lls", str(squashfs_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if listing.returncode:
+            fail("SquashFS listing failed: " + (listing.stdout + listing.stderr).strip())
+        require("www/luci-static/liquid" not in listing.stdout, "Liquid is unexpectedly present in final rootfs")
+        passed("Liquid absent from final rootfs")
         verify_rootfs(extracted)
 
 
@@ -382,7 +388,6 @@ def main() -> int:
     parser.add_argument("--upgrade-platform", type=Path, required=True)
     parser.add_argument("--theme-lock", type=Path, required=True)
     parser.add_argument("--argon-package", type=Path, required=True)
-    parser.add_argument("--liquid-package", type=Path, required=True)
     parser.add_argument("--kernel-tar", type=Path)
     parser.add_argument("--spansion", type=Path)
     parser.add_argument("--recovery", type=Path)
@@ -396,7 +401,6 @@ def main() -> int:
             args.upgrade_platform,
             args.theme_lock,
             args.argon_package,
-            args.liquid_package,
         )
         if args.kernel_tar:
             verify_kernel_patch_application(args.generated_patch, args.kernel_tar)

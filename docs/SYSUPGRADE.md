@@ -31,4 +31,4 @@ not use a recovery image as a sysupgrade image.
 
 The Stage 3 to Stage 3.5 keep-settings path and the Stage 3.5 clean sysupgrade
 path were hardware-validated. A keep-settings upgrade preserves an existing
-LuCI theme choice; a clean install defaults to Liquid.
+LuCI theme choice; a clean install uses LuCI's Bootstrap default.

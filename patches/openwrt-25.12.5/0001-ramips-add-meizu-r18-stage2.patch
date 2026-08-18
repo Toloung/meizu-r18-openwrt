@@ -164,18 +164,14 @@ new file mode 100755
 index 0000000..c0ffee8
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,11 @@
 +#!/bin/sh
-+# First boot only. Keep a pre-existing theme choice during a settings-preserved
-+# sysupgrade, but select Liquid for a clean install.
++# First boot only. Bootstrap remains LuCI's upstream clean-install default.
 +
 +[ "$(board_name)" = 'meizu,r18' ] || exit 0
 +
 +uci set system.@system[0].hostname='Meizu-R18'
 +uci set luci.main.lang='zh_cn'
-+if [ -z "$(uci -q get luci.main.mediaurlbase)" ]; then
-+	uci set luci.main.mediaurlbase='/luci-static/liquid'
-+fi
 +uci commit system
 +uci commit luci
 +
@@ -369,9 +365,9 @@ index 0000000..c0ffee6
 +SPI_NOR_JEDEC=01 20 18 4d 01 80
 +SPI_NOR_PAGE_SIZE_FIX=256
 +NET_RESCUE_AUTOSTART=disabled
-+DEFAULT_LUCI_THEME=Liquid
-+THEMES=Liquid,Argon,Bootstrap
-+RELEASE_CANDIDATE=v0.4.0-rc2
++DEFAULT_LUCI_THEME=Bootstrap
++THEMES=Bootstrap,Argon
++RELEASE_CANDIDATE=v0.4.0-rc3
 diff --git a/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
 new file mode 100755
 index 0000000..c0ffee7
@@ -647,7 +643,7 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 4 Release Candidate 2
++  DEVICE_VARIANT := Stage 4 Release Candidate 3
 +  DEVICE_PACKAGES := kmod-mt76 kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
 +  # Recovery is the only full-firmware artifact and intentionally has no

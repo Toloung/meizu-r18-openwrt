@@ -5,8 +5,7 @@ set -eu
 keep_file="${1:?usage: $0 KEEP_FILE DEFAULTS_FILE}"
 defaults_file="${2:?usage: $0 KEEP_FILE DEFAULTS_FILE}"
 expected_path='/etc/config/luci'
-old_rom_default='/luci-static/bootstrap'
-clean_default='/luci-static/liquid'
+manual_theme='/luci-static/argon'
 
 test -f "$keep_file" || {
 	echo "::error::R18 LuCI keep list is missing: $keep_file"
@@ -20,27 +19,23 @@ test "$keep_entries" = "$expected_path" || {
 }
 echo '[PASS] sysupgrade keep list contains /etc/config/luci'
 
-# A file equal to the old ROM default is normally omitted by changed-conffile
-# discovery. The explicit keep.d entry must still carry it to the new image.
+# The explicit keep.d entry must carry a user-selected Argon value to the new
+# image; this differs from the Bootstrap clean-install default.
 keep_settings_theme() {
 	old_theme="$1"
 	grep -Fxq "$expected_path" "$keep_file" && printf '%s\n' "$old_theme"
 }
 
-test "$(keep_settings_theme "$old_rom_default")" = "$old_rom_default" || {
-	echo '::error::keep-settings lost the old ROM-default Bootstrap selection'
+test "$(keep_settings_theme "$manual_theme")" = "$manual_theme" || {
+	echo '::error::keep-settings lost the explicit Argon selection'
 	exit 1
 }
-echo '[PASS] /etc/config/luci explicitly retained by keep-settings'
+echo '[PASS] /etc/config/luci explicitly retains an Argon selection'
 
-# A clean sysupgrade has no retained config, so the existing conditional UCI
-# default must be the sole source of the new Liquid selection.
-grep -Fq 'if [ -z "$(uci -q get luci.main.mediaurlbase)" ]; then' "$defaults_file" || {
-	echo '::error::Liquid clean default is no longer conditional'
+# LuCI itself provides the official Bootstrap default. The R18 first-boot
+# script must not override a retained choice or force a replacement default.
+if grep -Fq 'luci.main.mediaurlbase' "$defaults_file"; then
+	echo '::error::R18 defaults must not override LuCI Bootstrap mediaurlbase'
 	exit 1
-}
-grep -Fq "uci set luci.main.mediaurlbase='$clean_default'" "$defaults_file" || {
-	echo '::error::Liquid clean default is missing'
-	exit 1
-}
-echo '[PASS] clean default remains Liquid'
+fi
+echo '[PASS] Bootstrap clean default is left to LuCI upstream defaults'

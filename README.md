@@ -49,13 +49,12 @@ are not stored in this repository or documentation.
 
 ## LuCI themes
 
-- **Liquid** — default on a clean install
+- **Bootstrap** — official clean-install default
 - **Argon** — optional
-- **Bootstrap** — official fallback
 
 A settings-preserved sysupgrade explicitly retains `/etc/config/luci`, including
 an existing `luci.main.mediaurlbase` choice that happens to equal the previous
-firmware's ROM default. A clean upgrade selects Liquid.
+firmware's ROM default. A clean upgrade uses LuCI's Bootstrap default.
 
 ## Flash layout
 

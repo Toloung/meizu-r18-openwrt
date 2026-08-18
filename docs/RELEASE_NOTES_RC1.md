@@ -14,8 +14,8 @@ This draft release is based on OpenWrt 25.12.5 and Linux 6.12.94.
 
 ## LuCI themes
 
-- Liquid is the clean-install default.
-- Argon and Bootstrap remain selectable alternatives.
+- Bootstrap is the clean-install default.
+- Argon remains a selectable alternative.
 - Existing theme selection is preserved by a settings-retained sysupgrade.
 
 ## Pending validation

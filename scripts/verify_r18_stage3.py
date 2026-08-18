@@ -121,7 +121,7 @@ def verify_source(
     require("CONFIG_PACKAGE_luci-theme-liquid=y" not in config_text, "Liquid must not be selected")
     require("CONFIG_PACKAGE_luci-app-argon-config=y" not in config_text, "Argon Config must not be selected")
     require("CONFIG_PACKAGE_wget-nossl=y" not in config_text, "R18 must not select wget-nossl")
-    passed("Stage 4 RC3 retains LuCI, Bootstrap, Argon, and the MT76/MT7662 driver chain")
+    passed("Stage 4 RC4 retains LuCI, Bootstrap, Argon, and the MT76/MT7662 driver chain")
 
     dts = section_for(text, DT)
     require_all(
@@ -159,21 +159,28 @@ def verify_source(
     require_all(
         wifi,
         (
-            "psk_file=/etc/r18-wifi-psk",
+            "psk='password'",
             "configure_ap r18_24g",
             "configure_ap r18_5g",
             "R18-OpenWrt",
             "R18-OpenWrt-5G",
             "wireless.$section.network=lan",
             "wireless.$section.encryption=psk2+ccmp",
+            "uci -q get wireless.r18_24g",
+            "uci -q get wireless.r18_5g",
             "2g)",
             "5g)",
         ),
         "Stage 4 wireless defaults",
     )
     require("R18-OpenWrt-Test" not in wifi, "Stage 4 must not retain the test SSID")
-    require("key='" not in wifi and 'key="literal' not in wifi, "wireless defaults contain a literal PSK")
-    passed("2.4 GHz and 5 GHz first-boot LAN AP defaults are present without a public PSK")
+    require("r18-wifi-psk" not in wifi, "wireless defaults retain the private PSK file")
+    require('wireless.$section.key=$psk' in wifi, "wireless defaults do not configure the public Wi-Fi credential")
+    require(
+        wifi.find("uci -q get wireless.r18_24g") < wifi.find("for iface in"),
+        "wireless defaults may overwrite settings-preserved Wi-Fi configuration",
+    )
+    passed("2.4 GHz and 5 GHz first-boot LAN AP defaults use the intentional public WPA2 credential")
 
     defaults = section_for(text, DEFAULTS)
     keep_luci = section_for(text, KEEP_LUCI)
@@ -271,13 +278,13 @@ def verify_source(
             "NET_RESCUE_AUTOSTART=disabled",
             "DEFAULT_LUCI_THEME=Bootstrap",
             "THEMES=Bootstrap,Argon",
-            "RELEASE_CANDIDATE=v0.4.0-rc3",
+            "RELEASE_CANDIDATE=v0.4.0-rc4",
         ),
         "Stage 4 build identity",
     )
     image = section_for(text, IMAGE_MK)
     require(
-        "DEVICE_VARIANT := Stage 4 Release Candidate 3" in image,
+        "DEVICE_VARIANT := Stage 4 Release Candidate 4" in image,
         "R18 image variant is not Stage 4",
     )
     require(
@@ -325,6 +332,14 @@ def verify_rootfs(rootfs: Path) -> None:
     )
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
+    require("psk='password'" in wifi_text and 'wireless.$section.key=$psk' in wifi_text, "rootfs public Wi-Fi credential is missing")
+    require("r18-wifi-psk" not in wifi_text, "rootfs wireless defaults retain the private PSK file")
+    require(
+        wifi_text.find("uci -q get wireless.r18_24g") < wifi_text.find("for iface in"),
+        "rootfs wireless defaults may overwrite settings-preserved Wi-Fi configuration",
+    )
+    passed("R18-OpenWrt and R18-OpenWrt-5G are configured with the public WPA2 default")
+    passed("public default Wi-Fi credential is intentional")
     passed("final rootfs LuCI config exists")
     require(
         uci_option_value(luci_config.read_text(encoding="utf-8"), "core", "main", "mediaurlbase")
@@ -351,7 +366,7 @@ def verify_rootfs(rootfs: Path) -> None:
         ("NET_RESCUE_AUTOSTART=disabled", "rescue autostart=disabled"),
         ("DEFAULT_LUCI_THEME=Bootstrap", "default theme=Bootstrap"),
         ("THEMES=Bootstrap,Argon", "themes=Bootstrap,Argon"),
-        ("RELEASE_CANDIDATE=v0.4.0-rc3", "release candidate=v0.4.0-rc3"),
+        ("RELEASE_CANDIDATE=v0.4.0-rc4", "release candidate=v0.4.0-rc4"),
     ):
         require_exact_line(identity, expected_line, f"rootfs {label}")
         passed(f"rootfs {label}")
@@ -403,6 +418,9 @@ def verify_recovery_rootfs(recovery: Path) -> None:
         )
         if listing.returncode:
             fail("SquashFS listing failed: " + (listing.stdout + listing.stderr).strip())
+        require("etc/r18-wifi-psk" not in listing.stdout, "final rootfs contains a private Wi-Fi PSK file")
+        passed("no private Wi-Fi PSK file")
+        passed("no /etc/r18-wifi-psk")
         require("www/luci-static/liquid" not in listing.stdout, "Liquid is unexpectedly present in final rootfs")
         passed("Liquid absent from final rootfs")
         verify_rootfs(extracted)

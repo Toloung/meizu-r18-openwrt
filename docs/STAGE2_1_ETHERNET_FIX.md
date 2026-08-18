@@ -33,8 +33,7 @@ untested persistent-write path.
 
 On first boot only, `99-r18-wifi-test` finds the generated 2.4 GHz radio,
 enables it, and creates `R18-OpenWrt-Test` as a WPA2-PSK AP on `lan`/`br-lan`.
-It does not enable the 5 GHz radio.  The PSK is injected by CI from the private
-repository secret `R18_WIFI_TEST_PSK`, then deleted from the target after use;
-it is not in this repository or patch.  CI intentionally fails rather than
-build an AP image without that secret.  LAN remains `192.168.1.1` from the
-standard default network configuration.
+It does not enable the 5 GHz radio. This historical debug-AP policy was
+superseded by Stage 4 RC4, which enables both production SSIDs with the public
+factory Wi-Fi password documented in [INSTALL.md](INSTALL.md). LAN remains
+`192.168.1.1` from the standard default network configuration.

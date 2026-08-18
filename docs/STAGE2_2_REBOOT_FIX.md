@@ -41,8 +41,8 @@ reset, or firstboot command.
 
 The one-time defaults script sets `luci.main.lang=zh_cn`. The image includes
 `luci`, Bootstrap (default), and the Base, Firewall, and Package Manager
-simplified-Chinese language packages. 2.4 GHz remains the secret-protected
-debug AP on `lan`; 5 GHz remains disabled.
+simplified-Chinese language packages. The historical secret-protected debug AP
+policy was superseded by Stage 4 RC4's public factory dual-band Wi-Fi defaults.
 
 For the LuCI feed commit pinned by OpenWrt v25.12.5, the translation packages
 are `luci-i18n-base-zh-cn`, `luci-i18n-firewall-zh-cn`, and

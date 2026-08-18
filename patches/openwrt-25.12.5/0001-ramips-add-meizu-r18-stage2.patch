@@ -188,24 +188,19 @@ new file mode 100644
 index 0000000..c0ffee0
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,59 @@
 +#!/bin/sh
-+# First boot only. CI supplies the PSK in an image overlay; never store it in
-+# the public board patch. The boot sequence runs wifi config before this.
++# First boot only. This is an intentionally public factory Wi-Fi credential;
++# change it immediately after first login. The boot sequence runs wifi config
++# before this script.
 +
-+psk_file=/etc/r18-wifi-psk
-+[ -r "$psk_file" ] || {
-+	logger -t r18-wifi-defaults 'No private PSK supplied; leaving Wi-Fi disabled.'
++psk='password'
++
++# A settings-preserved sysupgrade restores these R18 sections before this
++# first-boot helper runs. Leave every user Wi-Fi choice untouched in that case.
++if uci -q get wireless.r18_24g >/dev/null || uci -q get wireless.r18_5g >/dev/null; then
 +	exit 0
-+}
-+
-+psk="$(cat "$psk_file")"
-+rm -f "$psk_file"
-+
-+[ "${#psk}" -ge 8 ] || {
-+	logger -t r18-wifi-defaults 'Invalid private PSK; leaving Wi-Fi disabled.'
-+	exit 0
-+}
++fi
 +
 +# wifi config may create a generic default iface for each PHY. Replace all of
 +# those first-boot placeholders with the two R18 LAN APs.
@@ -367,7 +362,7 @@ index 0000000..c0ffee6
 +NET_RESCUE_AUTOSTART=disabled
 +DEFAULT_LUCI_THEME=Bootstrap
 +THEMES=Bootstrap,Argon
-+RELEASE_CANDIDATE=v0.4.0-rc3
++RELEASE_CANDIDATE=v0.4.0-rc4
 diff --git a/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck b/target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck
 new file mode 100755
 index 0000000..c0ffee7
@@ -643,7 +638,7 @@ index 96b3aeb..2768399 100644
 +  IMAGE_SIZE := 15360k
 +  DEVICE_VENDOR := Meizu
 +  DEVICE_MODEL := R18
-+  DEVICE_VARIANT := Stage 4 Release Candidate 3
++  DEVICE_VARIANT := Stage 4 Release Candidate 4
 +  DEVICE_PACKAGES := kmod-mt76 kmod-mt7603 kmod-mt76x2 kmod-usb2 kmod-usb-ohci
 +  SUPPORTED_DEVICES += meizu,r18
 +  # Recovery is the only full-firmware artifact and intentionally has no

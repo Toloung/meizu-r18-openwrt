@@ -18,5 +18,15 @@ The recovery image is exactly 15 MiB and occupies only the Firmware region.
 It is not a raw whole-flash image and must not be substituted with an unknown
 binary.
 
+## Default Wi-Fi
+
+- 2.4 GHz SSID: `R18-OpenWrt`
+- 5 GHz SSID: `R18-OpenWrt-5G`
+- WPA2 password: `password`
+
+Both access points are enabled after a clean install. **Change the default
+Wi-Fi password immediately after first login.** This public Wi-Fi credential
+does not set the LuCI or root password.
+
 Do not erase, overwrite, or otherwise modify Factory, Config, Storage, or the
 bootloader. Preserve an original full-flash backup offline before experimenting.

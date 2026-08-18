@@ -20,7 +20,7 @@ not an official OpenWrt target.
 - LAN1 (P1) and LAN2 (P3)
 - WAN configuration: P4 / `eth0.2`, DHCP and DHCPv6
 - 2.4 GHz and 5 GHz access points
-- LuCI, Chinese language default, and three installed themes
+- LuCI, Chinese language default, Bootstrap, and Argon
 - Keep-settings and clean (`sysupgrade -n`) upgrades
 - WPS/TFTP recovery image
 - JFFS2 first/second boot and upgrade persistence
@@ -44,8 +44,11 @@ network. It has not been represented as completed.
 - 2.4 GHz: `R18-OpenWrt`
 - 5 GHz: `R18-OpenWrt-5G`
 
-The build receives the WPA2 key only through a GitHub Actions secret. Passwords
-are not stored in this repository or documentation.
+Both access points are enabled on a clean install with WPA2-PSK/CCMP. Their
+public factory/default Wi-Fi password is `password`.
+
+**Change the default Wi-Fi password immediately after first login.** This does
+not set a LuCI or root password; management credentials remain separate.
 
 ## LuCI themes
 

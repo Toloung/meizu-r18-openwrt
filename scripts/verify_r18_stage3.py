@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import shutil
 import struct
 import subprocess
@@ -37,10 +38,8 @@ UPGRADE_PLATFORM = "target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.s
 ARGON_DEPENDS = "+USE_APK:wget-any +!USE_APK:wget +jsonfilter"
 ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
-    "etc/uci-defaults/98-r18-net-rescue-disable",
-    "etc/uci-defaults/97-r18-stage3-defaults",
+    "etc/uci-defaults",
     "lib/upgrade/keep.d/r18-luci",
-    "etc/uci-defaults/99-r18-wifi-defaults",
     "usr/sbin/r18-healthcheck",
     "etc/r18-build-info",
     "etc/config/luci",
@@ -73,6 +72,21 @@ def require_all(text: str, items: tuple[str, ...], label: str) -> None:
 
 def require_exact_line(text: str, expected: str, label: str) -> None:
     require(expected in text.splitlines(), f"{label} is missing or incorrect (expected {expected})")
+
+
+def uci_option_value(config: str, section_type: str, section_name: str, option_name: str) -> str | None:
+    """Return one UCI option value, accepting quoted or canonical serialized syntax."""
+    in_section = False
+    for raw_line in config.splitlines():
+        tokens = shlex.split(raw_line, comments=True)
+        if not tokens:
+            continue
+        if tokens[0] == "config":
+            in_section = len(tokens) >= 3 and tokens[1] == section_type and tokens[2] == section_name
+            continue
+        if in_section and tokens[0] == "option" and len(tokens) >= 3 and tokens[1] == option_name:
+            return " ".join(tokens[2:])
+    return None
 
 
 def verify_source(
@@ -311,10 +325,21 @@ def verify_rootfs(rootfs: Path) -> None:
     )
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
+    passed("final rootfs LuCI config exists")
     require(
-        "option mediaurlbase '/luci-static/bootstrap'" in luci_config.read_text(encoding="utf-8"),
+        uci_option_value(luci_config.read_text(encoding="utf-8"), "core", "main", "mediaurlbase")
+        == "/luci-static/bootstrap",
         "rootfs LuCI Bootstrap clean default is missing",
     )
+    passed("Bootstrap is LuCI clean default")
+    defaults_dir = rootfs / "etc/uci-defaults"
+    for default_script in defaults_dir.rglob("*"):
+        if default_script.is_file():
+            require(
+                "uci set luci.main.mediaurlbase" not in default_script.read_text(encoding="utf-8"),
+                f"rootfs has a boot-time theme override: {default_script.relative_to(rootfs)}",
+            )
+    passed("no boot-time theme override")
     identity = build_info.read_text(encoding="utf-8")
     for expected_line, label in (
         ("Stage=4", "Stage=4"),
@@ -330,10 +355,13 @@ def verify_rootfs(rootfs: Path) -> None:
     ):
         require_exact_line(identity, expected_line, f"rootfs {label}")
         passed(f"rootfs {label}")
-    require(bootstrap.is_dir() and argon.is_dir(), "Bootstrap or Argon theme assets are missing")
+    require(bootstrap.is_dir(), "Bootstrap theme assets are missing")
+    passed("Bootstrap static assets installed")
+    require(argon.is_dir(), "Argon theme assets are missing")
+    passed("Argon static assets installed")
     enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
     require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")
-    passed("Bootstrap clean default and Argon are present; r18-net-rescue has no auto-start link")
+    passed("r18-net-rescue has no auto-start link")
 
 
 def verify_recovery_rootfs(recovery: Path) -> None:

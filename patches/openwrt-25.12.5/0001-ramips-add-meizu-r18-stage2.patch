@@ -355,10 +355,10 @@ new file mode 100644
 index 0000000..c0ffee6
 --- /dev/null
 +++ b/target/linux/ramips/mt76x8/base-files/etc/r18-build-info
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +Project=Meizu R18 OpenWrt
 +Stage=4
-+NAME=Release Candidate 2
++NAME=Release Candidate
 +OpenWrt=25.12.5
 +Kernel=6.12.94
 +OPENWRT=25.12.5

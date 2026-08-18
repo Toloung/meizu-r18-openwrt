@@ -72,6 +72,10 @@ def require_all(text: str, items: tuple[str, ...], label: str) -> None:
         require(item in text, f"{label} lacks required content: {item}")
 
 
+def require_exact_line(text: str, expected: str, label: str) -> None:
+    require(expected in text.splitlines(), f"{label} is missing or incorrect (expected {expected})")
+
+
 def verify_source(
     stage_patch: Path,
     generated_patch: Path,
@@ -248,11 +252,12 @@ def verify_source(
     passed("Argon and Liquid sources are pinned and dependency-audited")
 
     build_info = section_for(text, BUILD_INFO)
+    require("@@ -0,0 +1,16 @@" in build_info, "r18-build-info patch hunk must declare all 16 lines")
     require_all(
         build_info,
         (
             "Stage=4",
-            "NAME=Release Candidate 2",
+            "NAME=Release Candidate",
             "OPENWRT=25.12.5",
             "KERNEL=6.12.94",
             "BOARD=meizu,r18",
@@ -295,14 +300,16 @@ def verify_rootfs(rootfs: Path) -> None:
         rootfs / "lib/upgrade/keep.d/r18-luci",
         rootfs / "etc/uci-defaults/99-r18-wifi-defaults",
         rootfs / "usr/sbin/r18-healthcheck",
-        rootfs / "etc/r18-build-info",
         rootfs / "www/luci-static/bootstrap",
         rootfs / "www/luci-static/argon",
         rootfs / "www/luci-static/liquid",
     )
     for path in expected:
         require(path.exists(), f"Stage 4 rootfs misses {path.relative_to(rootfs)}")
-    rescue, _, defaults, keep_luci, wifi, health, build_info, bootstrap, argon, liquid = expected
+    rescue, _, defaults, keep_luci, wifi, health, bootstrap, argon, liquid = expected
+    build_info = rootfs / "etc/r18-build-info"
+    require(build_info.is_file(), "final rootfs is missing /etc/r18-build-info")
+    passed("final rootfs contains /etc/r18-build-info")
     require(rescue.stat().st_mode & 0o111, "r18-net-rescue is not executable in rootfs")
     require(health.stat().st_mode & 0o111, "r18-healthcheck is not executable in rootfs")
     require("Meizu-R18" in defaults.read_text(encoding="utf-8"), "rootfs hostname default is missing")
@@ -313,10 +320,20 @@ def verify_rootfs(rootfs: Path) -> None:
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
     identity = build_info.read_text(encoding="utf-8")
-    require(
-        "Stage=4" in identity and "NAME=Release Candidate 2" in identity and "DEFAULT_LUCI_THEME=Liquid" in identity and "RELEASE_CANDIDATE=v0.4.0-rc2" in identity,
-        "rootfs Stage 4 identity is missing",
-    )
+    for expected_line, label in (
+        ("Stage=4", "Stage=4"),
+        ("NAME=Release Candidate", "NAME=Release Candidate"),
+        ("OPENWRT=25.12.5", "OpenWrt=25.12.5"),
+        ("KERNEL=6.12.94", "Kernel=6.12.94"),
+        ("BOARD=meizu,r18", "Board=meizu,r18"),
+        ("SPI_NOR_PAGE_SIZE_FIX=256", "SPI NOR page-size fix=256"),
+        ("NET_RESCUE_AUTOSTART=disabled", "rescue autostart=disabled"),
+        ("DEFAULT_LUCI_THEME=Liquid", "default theme=Liquid"),
+        ("THEMES=Liquid,Argon,Bootstrap", "themes=Liquid,Argon,Bootstrap"),
+        ("RELEASE_CANDIDATE=v0.4.0-rc2", "release candidate=v0.4.0-rc2"),
+    ):
+        require_exact_line(identity, expected_line, f"rootfs {label}")
+        passed(f"rootfs {label}")
     require(bootstrap.is_dir() and argon.is_dir() and liquid.is_dir(), "one or more LuCI theme asset directories are missing")
     enabled_links = sorted((rootfs / "etc/rc.d").glob("S*r18-net-rescue"))
     require(not enabled_links, "r18-net-rescue is unexpectedly enabled in image")

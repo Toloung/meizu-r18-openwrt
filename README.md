@@ -53,8 +53,9 @@ are not stored in this repository or documentation.
 - **Argon** — optional
 - **Bootstrap** — official fallback
 
-A settings-preserved sysupgrade does not overwrite an existing
-`luci.main.mediaurlbase` choice.
+A settings-preserved sysupgrade explicitly retains `/etc/config/luci`, including
+an existing `luci.main.mediaurlbase` choice that happens to equal the previous
+firmware's ROM default. A clean upgrade selects Liquid.
 
 ## Flash layout
 

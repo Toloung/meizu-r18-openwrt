@@ -28,6 +28,7 @@ NETWORK = "target/linux/ramips/mt76x8/base-files/etc/board.d/02_network"
 RESCUE = "target/linux/ramips/mt76x8/base-files/etc/init.d/r18-net-rescue"
 RESCUE_DISABLE = "target/linux/ramips/mt76x8/base-files/etc/uci-defaults/98-r18-net-rescue-disable"
 DEFAULTS = "target/linux/ramips/mt76x8/base-files/etc/uci-defaults/97-r18-stage3-defaults"
+KEEP_LUCI = "target/linux/ramips/mt76x8/base-files/lib/upgrade/keep.d/r18-luci"
 WIFI_DEFAULTS = "target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults"
 HEALTHCHECK = "target/linux/ramips/mt76x8/base-files/usr/sbin/r18-healthcheck"
 BUILD_INFO = "target/linux/ramips/mt76x8/base-files/etc/r18-build-info"
@@ -39,6 +40,7 @@ ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
     "etc/uci-defaults/98-r18-net-rescue-disable",
     "etc/uci-defaults/97-r18-stage3-defaults",
+    "lib/upgrade/keep.d/r18-luci",
     "etc/uci-defaults/99-r18-wifi-defaults",
     "usr/sbin/r18-healthcheck",
     "etc/r18-build-info",
@@ -158,6 +160,7 @@ def verify_source(
     passed("2.4 GHz and 5 GHz first-boot LAN AP defaults are present without a public PSK")
 
     defaults = section_for(text, DEFAULTS)
+    keep_luci = section_for(text, KEEP_LUCI)
     require_all(
         defaults,
         (
@@ -168,7 +171,13 @@ def verify_source(
         ),
         "Stage 4 system defaults",
     )
-    passed("Stage 4 clean installs select Liquid without overwriting a retained theme")
+    require("/etc/config/luci" in keep_luci, "R18 LuCI config is absent from sysupgrade keep list")
+    require(
+        text.count("uci set luci.main.mediaurlbase") == 1,
+        "theme selection has an unexpected boot-time override",
+    )
+    passed("/etc/config/luci explicitly retained by keep-settings")
+    passed("no boot-time theme override; clean default remains Liquid")
 
     rescue = section_for(text, RESCUE)
     disable = section_for(text, RESCUE_DISABLE)
@@ -233,14 +242,17 @@ def verify_source(
     require("LUCI_TITLE:=Liquid glass theme for LuCI" in liquid, "pinned Liquid package is not luci-theme-liquid")
     require(f"LUCI_DEPENDS:={LIQUID_DEPENDS}" in liquid, "Liquid dependency audit changed")
     require("node" not in liquid.lower() and "python" not in liquid.lower() and "php" not in liquid.lower(), "Liquid Makefile pulls a prohibited runtime")
-    passed("Bootstrap retained; Argon and Liquid sources are pinned and dependency-audited")
+    passed("Bootstrap retained")
+    passed("Argon retained")
+    passed("Liquid retained")
+    passed("Argon and Liquid sources are pinned and dependency-audited")
 
     build_info = section_for(text, BUILD_INFO)
     require_all(
         build_info,
         (
             "Stage=4",
-            "NAME=Release Candidate",
+            "NAME=Release Candidate 2",
             "OPENWRT=25.12.5",
             "KERNEL=6.12.94",
             "BOARD=meizu,r18",
@@ -248,12 +260,13 @@ def verify_source(
             "NET_RESCUE_AUTOSTART=disabled",
             "DEFAULT_LUCI_THEME=Liquid",
             "THEMES=Liquid,Argon,Bootstrap",
+            "RELEASE_CANDIDATE=v0.4.0-rc2",
         ),
         "Stage 4 build identity",
     )
     image = section_for(text, IMAGE_MK)
     require(
-        "DEVICE_VARIANT := Stage 4 Release Candidate" in image,
+        "DEVICE_VARIANT := Stage 4 Release Candidate 2" in image,
         "R18 image variant is not Stage 4",
     )
     require(
@@ -279,6 +292,7 @@ def verify_rootfs(rootfs: Path) -> None:
         rootfs / "etc/init.d/r18-net-rescue",
         rootfs / "etc/uci-defaults/98-r18-net-rescue-disable",
         rootfs / "etc/uci-defaults/97-r18-stage3-defaults",
+        rootfs / "lib/upgrade/keep.d/r18-luci",
         rootfs / "etc/uci-defaults/99-r18-wifi-defaults",
         rootfs / "usr/sbin/r18-healthcheck",
         rootfs / "etc/r18-build-info",
@@ -288,15 +302,19 @@ def verify_rootfs(rootfs: Path) -> None:
     )
     for path in expected:
         require(path.exists(), f"Stage 4 rootfs misses {path.relative_to(rootfs)}")
-    rescue, _, defaults, wifi, health, build_info, bootstrap, argon, liquid = expected
+    rescue, _, defaults, keep_luci, wifi, health, build_info, bootstrap, argon, liquid = expected
     require(rescue.stat().st_mode & 0o111, "r18-net-rescue is not executable in rootfs")
     require(health.stat().st_mode & 0o111, "r18-healthcheck is not executable in rootfs")
     require("Meizu-R18" in defaults.read_text(encoding="utf-8"), "rootfs hostname default is missing")
+    require(
+        keep_luci.read_text(encoding="utf-8").strip() == "/etc/config/luci",
+        "rootfs sysupgrade keep list does not explicitly retain /etc/config/luci",
+    )
     wifi_text = wifi.read_text(encoding="utf-8")
     require("configure_ap r18_24g" in wifi_text and "configure_ap r18_5g" in wifi_text, "rootfs dual-band defaults are missing")
     identity = build_info.read_text(encoding="utf-8")
     require(
-        "Stage=4" in identity and "NAME=Release Candidate" in identity and "DEFAULT_LUCI_THEME=Liquid" in identity,
+        "Stage=4" in identity and "NAME=Release Candidate 2" in identity and "DEFAULT_LUCI_THEME=Liquid" in identity and "RELEASE_CANDIDATE=v0.4.0-rc2" in identity,
         "rootfs Stage 4 identity is missing",
     )
     require(bootstrap.is_dir() and argon.is_dir() and liquid.is_dir(), "one or more LuCI theme asset directories are missing")

@@ -1,10 +1,11 @@
-name: Meizu R18 Stage 4 RC4 - Public Wi-Fi Defaults
+name: Meizu R18 Stage 4 RC5 - UI Integration and Hardware Discovery
 
 on:
   workflow_dispatch:
   push:
     paths:
       - 'configs/r18-initramfs.config'
+      - 'files/r18-rc5/**'
       - 'patches/openwrt-25.12.5/**'
       - 'scripts/verify_r18_recovery.py'
       - 'scripts/verify_r18_stage24.py'
@@ -77,6 +78,43 @@ jobs:
           }
           fetch_theme Argon "$ARGON_SOURCE" "$ARGON_COMMIT" openwrt/package/r18-luci-themes/luci-theme-argon
 
+      - name: Neutralize Argon first-boot theme selection
+        run: |
+          set -eu
+          argon_default=openwrt/package/r18-luci-themes/luci-theme-argon/root/etc/uci-defaults/30_luci-theme-argon
+          test -f "$argon_default" || {
+            echo "::error::Pinned Argon first-boot script is missing: $argon_default"
+            exit 1
+          }
+          # Keep Argon registration, but never replace a ROM or restored
+          # mediaurlbase choice during first boot.
+          sed -i '\|set luci.main.mediaurlbase=/luci-static/argon|d' "$argon_default"
+          grep -Fq 'set luci.themes.Argon=/luci-static/argon' "$argon_default" || {
+            echo '::error::Argon theme registration was unexpectedly removed'
+            exit 1
+          }
+          if grep -Fq 'luci.main.mediaurlbase' "$argon_default"; then
+            echo '::error::Argon first-boot script still overrides mediaurlbase'
+            exit 1
+          fi
+          echo '[PASS] Argon registered without a first-boot mediaurlbase override'
+
+      - name: Install RC5 Argon ROM theme default
+        run: |
+          set -eu
+          source=files/r18-rc5/etc/config/luci
+          destination=openwrt/files/etc/config/luci
+          test -f "$source" || {
+            echo "::error::RC5 LuCI ROM configuration is missing: $source"
+            exit 1
+          }
+          install -D -m 0644 "$source" "$destination"
+          cmp -s "$source" "$destination" || {
+            echo '::error::RC5 LuCI ROM configuration was not installed intact'
+            exit 1
+          }
+          echo '[PASS] Argon ROM default overlay installed'
+
       - name: Restore OpenWrt downloads cache
         uses: actions/cache@v4
         with:
@@ -95,6 +133,9 @@ jobs:
           wifi=openwrt/target/linux/ramips/mt76x8/base-files/etc/uci-defaults/99-r18-wifi-defaults
           image=openwrt/target/linux/ramips/image/mt76x8.mk
           argon=openwrt/package/r18-luci-themes/luci-theme-argon/Makefile
+          argon_default=openwrt/package/r18-luci-themes/luci-theme-argon/root/etc/uci-defaults/30_luci-theme-argon
+          luci_rom=files/r18-rc5/etc/config/luci
+          dts=openwrt/target/linux/ramips/dts/mt7628an_meizu_r18.dts
           check_fixed() {
             desc="$1"
             pattern="$2"
@@ -138,11 +179,20 @@ jobs:
           check_file 'R18 LuCI sysupgrade keep list' "$keep_luci"
           check_fixed '/etc/config/luci explicitly retained by keep-settings' '/etc/config/luci' "$keep_luci"
           check_file 'pinned Argon Makefile' "$argon"
+          check_file 'neutralized Argon first-boot script' "$argon_default"
+          check_file 'RC5 Argon ROM configuration' "$luci_rom"
+          check_fixed 'Argon ROM default' "option mediaurlbase '/luci-static/argon'" "$luci_rom"
+          check_fixed 'Argon theme registration retained' 'set luci.themes.Argon=/luci-static/argon' "$argon_default"
+          check_absent 'Argon first-boot mediaurlbase override' 'luci\.main\.mediaurlbase' "$argon_default"
+          check_absent 'unverified gpio-keys DTS node' 'gpio-keys' "$dts"
+          check_absent 'unverified gpio-leds DTS node' 'gpio-leds' "$dts"
           if [ -e openwrt/package/r18-luci-themes/luci-theme-liquid ]; then
-            echo '::error::Liquid source directory must not be fetched for RC4'
+            echo '::error::Liquid source directory must not be fetched for RC5'
             exit 1
           fi
           echo '[PASS] Liquid source directory is absent'
+          echo '[PASS] no unverified gpio-keys added'
+          echo '[PASS] no unverified gpio-leds added'
           check_fixed 'rescue START=99' 'START=99' "$rescue"
           check_fixed 'rescue procd enabled' 'USE_PROCD=1' "$rescue"
           check_fixed 'rescue delay = 180' 'sleep 180' "$worker"
@@ -155,7 +205,7 @@ jobs:
           private_prefix='R18'
           private_name="${private_prefix}_WIFI"
           if grep -Eq "secrets\\.${private_name}|${private_name}_(PSK|TEST_PSK)" .github/workflows/r18-initramfs.yml; then
-            echo '::error::RC4 must not inject a GitHub Secret as a Wi-Fi PSK'
+            echo '::error::RC5 must not inject a GitHub Secret as a Wi-Fi PSK'
             exit 1
           fi
           echo '[PASS] no GitHub Secret embedded'
@@ -200,8 +250,9 @@ jobs:
             --config configs/r18-initramfs.config \
             --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
             --theme-lock themes/r18-luci-themes.lock \
-            --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile
-          echo '[PASS] Stage 4 RC4 defaults, themes, public Wi-Fi, keep-settings, and healthcheck shell syntax'
+            --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --r18-luci-config files/r18-rc5/etc/config/luci
+          echo '[PASS] Stage 4 RC5 defaults, themes, public Wi-Fi, deferred GPIOs, keep-settings, and healthcheck shell syntax'
 
       - name: Prepare build configuration
         working-directory: openwrt
@@ -257,7 +308,7 @@ jobs:
           require_luci_config 'CONFIG_PACKAGE_luci-theme-bootstrap=y' 'luci-theme-bootstrap'
           require_luci_config 'CONFIG_PACKAGE_luci-theme-argon=y' 'luci-theme-argon'
           grep -Fx 'CONFIG_PACKAGE_luci-theme-liquid=y' .config && {
-            echo '::error::luci-theme-liquid must not be selected for RC4'
+            echo '::error::luci-theme-liquid must not be selected for RC5'
             exit 1
           } || true
           echo '[PASS] Liquid absent'
@@ -307,6 +358,7 @@ jobs:
             --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
             --theme-lock themes/r18-luci-themes.lock \
             --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --r18-luci-config files/r18-rc5/etc/config/luci \
             --kernel-tar openwrt/dl/linux-6.12.94.tar.xz
 
       - name: Build firmware
@@ -392,6 +444,7 @@ jobs:
             --upgrade-platform openwrt/target/linux/ramips/mt76x8/base-files/lib/upgrade/platform.sh \
             --theme-lock themes/r18-luci-themes.lock \
             --argon-package openwrt/package/r18-luci-themes/luci-theme-argon/Makefile \
+            --r18-luci-config files/r18-rc5/etc/config/luci \
             --recovery "$recovery"
           python3 - "$recovery" "$sysupgrade" <<'PY' > artifacts/IMAGE-SIZES.txt
           import struct
@@ -423,15 +476,15 @@ jobs:
           print(f'theme delta sysupgrade bytes: {sysupgrade.stat().st_size - stage35_sysupgrade:+d}')
           PY
           cat artifacts/IMAGE-SIZES.txt
-          printf '%s\n' 'Meizu R18 OpenWrt 25.12.5 Release Candidate 4: clean install enables the public factory WPA2 default on R18-OpenWrt and R18-OpenWrt-5G. Change the Wi-Fi password immediately after first login. Keep-settings sysupgrade preserves user wireless settings and the LuCI theme choice. WAN P4 upstream DHCP / Internet physical validation remains pending.' > artifacts/RELEASE-CANDIDATE.txt
+          printf '%s\n' 'Meizu R18 OpenWrt 25.12.5 Release Candidate 5: clean install uses Argon as the ROM LuCI default and enables the public factory WPA2 default on R18-OpenWrt and R18-OpenWrt-5G. Change the Wi-Fi password immediately after first login. Keep-settings sysupgrade preserves user wireless settings and the LuCI theme choice. WAN P4 upstream DHCP / Internet physical validation remains pending.' > artifacts/RELEASE-CANDIDATE.txt
           cat > artifacts/README-FIRST.txt <<'EOF'
-          Meizu R18 OpenWrt 25.12.5 Release Candidate 4
+          Meizu R18 OpenWrt 25.12.5 Release Candidate 5
 
           Normal OpenWrt upgrade: use *-squashfs-sysupgrade.bin and run sysupgrade -T first.
           First install or recovery: use meizu_r18.bin with the documented WPS/TFTP procedure.
           Default Wi-Fi: R18-OpenWrt and R18-OpenWrt-5G, WPA2 password: password.
           Change the default Wi-Fi password immediately after first login. This does not set a LuCI or root password.
-          Keep-settings sysupgrade preserves user wireless settings and /etc/config/luci; clean sysupgrade uses LuCI Bootstrap. WAN P4 upstream DHCP / Internet validation is pending.
+          Keep-settings sysupgrade preserves user wireless settings and /etc/config/luci; clean sysupgrade uses ROM Argon. WAN P4 upstream DHCP / Internet validation is pending.
           EOF
 
       - name: Generate build metadata
@@ -447,7 +500,7 @@ jobs:
           )
           {
             echo 'Project: Meizu R18 OpenWrt'
-            echo 'Stage: 4 - Release Candidate 4 (v0.4.0-rc4)'
+            echo 'Stage: 4 - Release Candidate 5 (v0.4.0-rc5)'
             echo 'OpenWrt: 25.12.5'
             echo 'Kernel: 6.12.94'
             echo 'Target: ramips/mt76x8'
@@ -467,9 +520,9 @@ jobs:
             echo '  manual service: retained'
             echo
             echo 'LuCI themes:'
-            echo '  default clean-install theme: Bootstrap'
+            echo '  default clean-install theme: Argon (ROM configuration)'
             echo '  keep-settings LuCI config: /etc/config/luci'
-            echo '  installed themes: Bootstrap, Argon'
+            echo '  installed themes: Argon, Bootstrap'
             echo '  Argon source: https://github.com/jerrykuku/luci-theme-argon.git'
             echo '  Argon pin: 86c3156bab0ee2b8c91af68b3fa4655f2df51d09'
             echo
@@ -505,5 +558,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: meizu-r18-stage4-rc4
+          name: meizu-r18-stage4-rc5
           path: artifacts/

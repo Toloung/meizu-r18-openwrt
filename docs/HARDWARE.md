@@ -47,7 +47,23 @@ CRC`, and `Truncating ino` counters.
 LAN1 and LAN2 were physically validated. WAN configuration is validated, but
 the P4 upstream DHCP / Internet physical test remains pending.
 
-## Deferred GPIO work
+## Buttons and LEDs
 
-Reset, WPS, and LED GPIO electrical mappings are not formally established and
-are intentionally not claimed by this target.
+Stage 4.1 completed non-destructive runtime, source, and passive physical
+observation. No GPIO was driven, exported, or read directly.
+
+- **WPS:** runtime GPIO and polarity are unknown. The Padavan MZ-R18 profile
+  leaves `BOARD_GPIO_BTN_WPS` undefined, and a runtime short press produced no
+  kernel, ubus, hotplug, input, or hostapd event. OpenWrt runtime WPS is
+  deferred; the separate bootloader WPS/TFTP recovery procedure is unchanged.
+- **Reset:** Padavan source identifies GPIO43, but does not state polarity.
+  No `gpio-keys` binding is included.
+- **Power LED:** Padavan source identifies GPIO4, but does not state polarity.
+  No `gpio-leds` binding is included.
+- **MT7628 LED-function pads:** GPIO39=P4, GPIO40=P3, GPIO41=P2, GPIO42=P1,
+  GPIO43=P0, GPIO44=WLAN. Physical chassis wiring is unverified; passive LAN,
+  WAN, and Wi-Fi observation did not establish a mapping.
+
+No GPIO button or LED nodes are included because electrical polarity and
+physical wiring are not sufficiently verified. See
+[GPIO-DISCOVERY.md](GPIO-DISCOVERY.md) for the evidence record.

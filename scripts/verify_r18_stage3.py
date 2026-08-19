@@ -39,7 +39,10 @@ ARGON_DEPENDS = "+USE_APK:wget-any +!USE_APK:wget +jsonfilter"
 ROOTFS_PATHS = (
     "etc/init.d/r18-net-rescue",
     "etc/uci-defaults",
+    "etc/init.d",
     "lib/upgrade/keep.d/r18-luci",
+    "lib",
+    "usr/lib",
     "usr/sbin/r18-healthcheck",
     "etc/r18-build-info",
     "etc/config/luci",
@@ -89,6 +92,18 @@ def uci_option_value(config: str, section_type: str, section_name: str, option_n
     return None
 
 
+def require_no_boot_theme_override(rootfs: Path) -> None:
+    """Reject mediaurlbase assignments in files that can execute at boot."""
+    for relative in ("etc/uci-defaults", "etc/init.d", "etc/rc.d", "lib", "usr/lib"):
+        candidate = rootfs / relative
+        if not candidate.exists():
+            continue
+        files = (candidate,) if candidate.is_file() else candidate.rglob("*")
+        for path in files:
+            if path.is_file() and b"luci.main.mediaurlbase" in path.read_bytes():
+                fail(f"rootfs has a boot-time mediaurlbase override: {path.relative_to(rootfs)}")
+
+
 def verify_source(
     stage_patch: Path,
     generated_patch: Path,
@@ -96,6 +111,7 @@ def verify_source(
     upgrade_platform: Path,
     theme_lock: Path,
     argon_package: Path,
+    r18_luci_config: Path,
 ) -> None:
     text = read_text(stage_patch, "managed Stage patch")
     verify_stage_patch(stage_patch)
@@ -121,7 +137,7 @@ def verify_source(
     require("CONFIG_PACKAGE_luci-theme-liquid=y" not in config_text, "Liquid must not be selected")
     require("CONFIG_PACKAGE_luci-app-argon-config=y" not in config_text, "Argon Config must not be selected")
     require("CONFIG_PACKAGE_wget-nossl=y" not in config_text, "R18 must not select wget-nossl")
-    passed("Stage 4 RC4 retains LuCI, Bootstrap, Argon, and the MT76/MT7662 driver chain")
+    passed("Stage 4 RC5 retains LuCI, Bootstrap, Argon, and the MT76/MT7662 driver chain")
 
     dts = section_for(text, DT)
     require_all(
@@ -148,7 +164,10 @@ def verify_source(
         "macaddr_factory_e000" not in dts and "eeprom@e000" not in dts and "macaddr@e000" not in dts,
         "R18 DTS must not use unconfirmed Factory +0xE000",
     )
+    require("gpio-keys" not in dts, "R18 DTS must not add an unverified gpio-keys node")
+    require("gpio-leds" not in dts, "R18 DTS must not add an unverified gpio-leds node")
     passed("R18 DTS retains the confirmed 2.4 GHz/5 GHz Factory EEPROM and MAC offsets")
+    passed("unverified WPS, Reset, and LED GPIO nodes remain deferred")
 
     network = section_for(text, NETWORK)
     require('"1:lan:1" "3:lan:2" "4:wan" "6@eth0"' in network, "R18 LAN/WAN switch mapping changed")
@@ -196,10 +215,10 @@ def verify_source(
     require("/etc/config/luci" in keep_luci, "R18 LuCI config is absent from sysupgrade keep list")
     require(
         text.count("uci set luci.main.mediaurlbase") == 0,
-        "theme selection has an unexpected boot-time override",
+        "R18 defaults have an unexpected boot-time theme override",
     )
     passed("/etc/config/luci explicitly retained by keep-settings")
-    passed("no boot-time theme override; Bootstrap remains LuCI's clean default")
+    passed("R18 defaults have no boot-time theme override")
 
     rescue = section_for(text, RESCUE)
     disable = section_for(text, RESCUE_DISABLE)
@@ -264,6 +283,13 @@ def verify_source(
     passed("wget-nossl absent")
     passed("argon-config absent")
 
+    luci_rom = read_text(r18_luci_config, "RC5 LuCI ROM configuration")
+    require(
+        uci_option_value(luci_rom, "core", "main", "mediaurlbase") == "/luci-static/argon",
+        "RC5 LuCI ROM configuration must set Argon directly",
+    )
+    passed("Argon is the RC5 ROM theme default")
+
     build_info = section_for(text, BUILD_INFO)
     require("@@ -0,0 +1,16 @@" in build_info, "r18-build-info patch hunk must declare all 16 lines")
     require_all(
@@ -276,15 +302,15 @@ def verify_source(
             "BOARD=meizu,r18",
             "SPI_NOR_PAGE_SIZE_FIX=256",
             "NET_RESCUE_AUTOSTART=disabled",
-            "DEFAULT_LUCI_THEME=Bootstrap",
-            "THEMES=Bootstrap,Argon",
-            "RELEASE_CANDIDATE=v0.4.0-rc4",
+            "DEFAULT_LUCI_THEME=Argon",
+            "THEMES=Argon,Bootstrap",
+            "RELEASE_CANDIDATE=v0.4.0-rc5",
         ),
         "Stage 4 build identity",
     )
     image = section_for(text, IMAGE_MK)
     require(
-        "DEVICE_VARIANT := Stage 4 Release Candidate 4" in image,
+        "DEVICE_VARIANT := Stage 4 Release Candidate 5" in image,
         "R18 image variant is not Stage 4",
     )
     require(
@@ -343,17 +369,24 @@ def verify_rootfs(rootfs: Path) -> None:
     passed("final rootfs LuCI config exists")
     require(
         uci_option_value(luci_config.read_text(encoding="utf-8"), "core", "main", "mediaurlbase")
-        == "/luci-static/bootstrap",
-        "rootfs LuCI Bootstrap clean default is missing",
+        == "/luci-static/argon",
+        "rootfs LuCI Argon ROM default is missing",
     )
-    passed("Bootstrap is LuCI clean default")
-    defaults_dir = rootfs / "etc/uci-defaults"
-    for default_script in defaults_dir.rglob("*"):
-        if default_script.is_file():
-            require(
-                "uci set luci.main.mediaurlbase" not in default_script.read_text(encoding="utf-8"),
-                f"rootfs has a boot-time theme override: {default_script.relative_to(rootfs)}",
-            )
+    passed("Argon is LuCI ROM clean default")
+    argon_default = rootfs / "etc/uci-defaults/30_luci-theme-argon"
+    require(argon_default.is_file(), "rootfs Argon registration script is missing")
+    argon_default_text = argon_default.read_text(encoding="utf-8")
+    require(
+        "set luci.themes.Argon=/luci-static/argon" in argon_default_text,
+        "rootfs Argon registration is missing",
+    )
+    require(
+        "luci.main.mediaurlbase" not in argon_default_text,
+        "rootfs Argon first-boot script overrides mediaurlbase",
+    )
+    passed("Argon is registered as selectable theme")
+    passed("Argon uci-defaults does not force mediaurlbase")
+    require_no_boot_theme_override(rootfs)
     passed("no boot-time theme override")
     identity = build_info.read_text(encoding="utf-8")
     for expected_line, label in (
@@ -364,9 +397,9 @@ def verify_rootfs(rootfs: Path) -> None:
         ("BOARD=meizu,r18", "Board=meizu,r18"),
         ("SPI_NOR_PAGE_SIZE_FIX=256", "SPI NOR page-size fix=256"),
         ("NET_RESCUE_AUTOSTART=disabled", "rescue autostart=disabled"),
-        ("DEFAULT_LUCI_THEME=Bootstrap", "default theme=Bootstrap"),
-        ("THEMES=Bootstrap,Argon", "themes=Bootstrap,Argon"),
-        ("RELEASE_CANDIDATE=v0.4.0-rc4", "release candidate=v0.4.0-rc4"),
+        ("DEFAULT_LUCI_THEME=Argon", "default theme=Argon"),
+        ("THEMES=Argon,Bootstrap", "themes=Argon,Bootstrap"),
+        ("RELEASE_CANDIDATE=v0.4.0-rc5", "release candidate=v0.4.0-rc5"),
     ):
         require_exact_line(identity, expected_line, f"rootfs {label}")
         passed(f"rootfs {label}")
@@ -434,6 +467,7 @@ def main() -> int:
     parser.add_argument("--upgrade-platform", type=Path, required=True)
     parser.add_argument("--theme-lock", type=Path, required=True)
     parser.add_argument("--argon-package", type=Path, required=True)
+    parser.add_argument("--r18-luci-config", type=Path, required=True)
     parser.add_argument("--kernel-tar", type=Path)
     parser.add_argument("--spansion", type=Path)
     parser.add_argument("--recovery", type=Path)
@@ -447,6 +481,7 @@ def main() -> int:
             args.upgrade_platform,
             args.theme_lock,
             args.argon_package,
+            args.r18_luci_config,
         )
         if args.kernel_tar:
             verify_kernel_patch_application(args.generated_patch, args.kernel_tar)

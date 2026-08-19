@@ -20,7 +20,7 @@ not an official OpenWrt target.
 - LAN1 (P1) and LAN2 (P3)
 - WAN configuration: P4 / `eth0.2`, DHCP and DHCPv6
 - 2.4 GHz and 5 GHz access points
-- LuCI, Chinese language default, Bootstrap, and Argon
+- LuCI, Chinese language default, Argon, and Bootstrap fallback
 - Keep-settings and clean (`sysupgrade -n`) upgrades
 - WPS/TFTP recovery image
 - JFFS2 first/second boot and upgrade persistence
@@ -52,12 +52,12 @@ not set a LuCI or root password; management credentials remain separate.
 
 ## LuCI themes
 
-- **Bootstrap** — official clean-install default
-- **Argon** — optional
+- **Argon** — ROM clean-install default
+- **Bootstrap** — installed fallback
 
 A settings-preserved sysupgrade explicitly retains `/etc/config/luci`, including
-an existing `luci.main.mediaurlbase` choice that happens to equal the previous
-firmware's ROM default. A clean upgrade uses LuCI's Bootstrap default.
+an existing `luci.main.mediaurlbase` choice. A clean upgrade uses the ROM
+Argon default; no first-boot script forces a theme after that.
 
 ## Flash layout
 
@@ -87,5 +87,8 @@ read-only; a WAN warning is expected when P4 has no upstream cable.
 ## Known limitations
 
 - WAN upstream DHCP / Internet physical validation is pending.
-- Reset/WPS/LED GPIO mappings are not formally confirmed.
+- OpenWrt runtime WPS button support is deferred / not yet validated.
+- Reset GPIO43 polarity is unverified.
+- Power LED GPIO4 polarity is unverified.
+- Chassis LAN/WAN/Wi-Fi LED mappings are unverified.
 - Startup timing has not been aggressively optimized.

@@ -1,7 +1,20 @@
 # Meizu R18 OpenWrt
 
-基于 OpenWrt 25.12.5 的魅族 R18 适配项目，提供适用于 MT7628 平台的
-recovery 与 sysupgrade 镜像；它不是 OpenWrt 官方支持的目标设备。
+基于 OpenWrt 25.12.5 的魅族路由器极速版（Meizu R18）适配项目。
+
+本项目为 MediaTek MT7628 平台的 Meizu R18 提供 OpenWrt 固件支持，包括：
+
+- Recovery 救援镜像
+- Sysupgrade 升级镜像
+- 双频无线支持
+- LAN/WAN 网络适配
+- LuCI Web 管理界面
+- SPI NOR Flash 修复
+- 安全升级机制
+
+> 本项目不是 OpenWrt 官方支持设备（official target）。
+>
+> 固件仅适用于 Meizu R18，请勿用于其它型号设备。
 
 当前发布候选版本：**v0.4.0-rc5**。
 
@@ -43,7 +56,7 @@ WAN Internet 连通性已通过真实上游网络实机验证，RC5 未改动该
 
 ## 无线
 
-全新安装时两个无线电均启用并桥接到 LAN。
+全新安装时两个无线均启用并桥接到 LAN。
 
 | 频段 | SSID | 加密 |
 | --- | --- | --- |
@@ -58,7 +71,6 @@ WAN Internet 连通性已通过真实上游网络实机验证，RC5 未改动该
 
 - 全新安装默认主题：**Argon**
 - 已安装的备用主题：**Bootstrap**
-- 不包含 Liquid
 - 默认语言：简体中文
 
 镜像包含 `/lib/upgrade/keep.d/r18-luci`，因此普通、保留配置的 sysupgrade 会保留
@@ -153,3 +165,13 @@ Stage 5 重点：
 - Reset 按钮评估
 - 增加附加软件包
 - 启动时间优化
+
+## Credits
+
+- OpenWrt Project
+- Linux Kernel
+- MediaTek MT76 Driver
+- Padavan Community
+
+## License
+本项目仅用于学习、研究和设备适配。

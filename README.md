@@ -161,10 +161,14 @@ SPI NOR patch、sysupgrade metadata、最终 rootfs 默认配置、recovery 结�
 
 Stage 5 重点：
 
-- 完成电气确认后的 LED 适配
-- Reset 按钮评估
-- 增加附加软件包
-- 启动时间优化
+- hostname/sysupgrade 细节优化
+- 启动过程分析与优化
+- 软件包集成评估
+- LuCI 状态信息增强
+- LED/Reset 硬件验证
+- 长期稳定性测试
+
+完整范围、优先级、依赖和测试标准见 [Stage 5 Roadmap](docs/STAGE5-ROADMAP.md)。
 
 ## Credits
 

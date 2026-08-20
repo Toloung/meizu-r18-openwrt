@@ -1,67 +1,79 @@
 # Meizu R18 OpenWrt
 
-## Status
+OpenWrt 25.12.5 support for the Meizu R18. This project provides recovery and
+sysupgrade images for the MT7628-based router; it is not an official OpenWrt
+target.
 
-**Release Candidate** for Meizu R18, based on OpenWrt 25.12.5 and Linux
-6.12.94. This repository builds tested recovery and sysupgrade images; it is
-not an official OpenWrt target.
+Current release candidate: **v0.4.0-rc5**.
+
+## Features
+
+- OpenWrt 25.12.5 with Linux 6.12.94
+- S25FL128S1 SPI NOR fix: 256-byte page programming for JEDEC
+  `01 20 18 4d 01 80`
+- Full-size WPS/TFTP recovery image with a clean `rootfs_data` marker and
+  erased (`FF`) suffix
+- Compact, board-checked sysupgrade image targeting only the firmware area
+- LAN and WAN configuration with DHCP, DHCPv6, firewall, and NAT
+- 2.4 GHz Wi-Fi and MT7662 PCIe 5 GHz Wi-Fi
+- LuCI with Simplified Chinese, Argon as the ROM default, and Bootstrap as a
+  fallback
+- Read-only `r18-healthcheck` diagnostics
+- Retained manual `r18-net-rescue` framework, disabled by default
 
 ## Hardware
 
-- MediaTek MT7628AN
-- 128 MiB RAM
-- 16 MiB S25FL128S1 SPI NOR
-- MT7628 integrated 2.4 GHz radio
-- MT7662 PCIe 5 GHz radio
-- Two LAN ports and one WAN port
+| Component | Supported hardware |
+| --- | --- |
+| SoC | MediaTek MT7628AN |
+| Flash | 16 MiB Spansion S25FL128S1 SPI NOR |
+| Wireless | Integrated 2.4 GHz plus MT7662 PCIe 5 GHz |
 
-## Verified features
+## Network
 
-- LAN1 (P1) and LAN2 (P3)
-- WAN configuration: P4 / `eth0.2`, DHCP and DHCPv6
-- 2.4 GHz and 5 GHz access points
-- LuCI, Chinese language default, Argon, and Bootstrap fallback
-- Keep-settings and clean (`sysupgrade -n`) upgrades
-- WPS/TFTP recovery image
-- JFFS2 first/second boot and upgrade persistence
-- S25FL128S1 256-byte page-program fix
-- Read-only `r18-healthcheck`
+The default LAN address is `192.168.1.1/24`.
 
-**Pending:** WAN P4 DHCP and Internet physical validation with a real upstream
-network. It has not been represented as completed.
-
-## Port mapping
-
-| Physical port | OpenWrt role |
+| R18 switch port | OpenWrt role |
 | --- | --- |
 | P1 | LAN1 |
 | P3 | LAN2 |
 | P4 | WAN |
 | P6 | CPU / `eth0` |
 
-## Wi-Fi
+WAN uses DHCP and DHCPv6. The firewall's WAN zone provides NAT and LAN-to-WAN
+forwarding. WAN Internet connectivity has been validated with a real upstream
+network on hardware; RC5 does not change this network path.
 
-- 2.4 GHz: `R18-OpenWrt`
-- 5 GHz: `R18-OpenWrt-5G`
+## Wireless
 
-Both access points are enabled on a clean install with WPA2-PSK/CCMP. Their
-public factory/default Wi-Fi password is `password`.
+Both radios are enabled on a clean install and bridge to LAN.
 
-**Change the default Wi-Fi password immediately after first login.** This does
-not set a LuCI or root password; management credentials remain separate.
+| Band | SSID | Security |
+| --- | --- | --- |
+| 2.4 GHz | `R18-OpenWrt` | WPA2-PSK/CCMP |
+| 5 GHz | `R18-OpenWrt-5G` | WPA2-PSK/CCMP |
 
-## LuCI themes
+The public factory Wi-Fi password is `password`.
 
-- **Argon** — ROM clean-install default
-- **Bootstrap** — installed fallback
+**Change the wireless password immediately after first login.** It is not a
+LuCI or root password; management credentials are handled separately.
 
-A settings-preserved sysupgrade explicitly retains `/etc/config/luci`, including
-an existing `luci.main.mediaurlbase` choice. A clean upgrade uses the ROM
-Argon default; no first-boot script forces a theme after that.
+## LuCI
+
+- Default clean-install theme: **Argon**
+- Installed fallback theme: **Bootstrap**
+- Liquid is not included
+- Default language: Simplified Chinese
+
+The image includes `/lib/upgrade/keep.d/r18-luci`, so a normal settings-kept
+sysupgrade retains `/etc/config/luci`, including a user-selected theme. A clean
+upgrade uses the Argon ROM default and does not run a boot-time theme override.
 
 ## Flash layout
 
-| Region | Range |
+The 16 MiB SPI NOR layout is preserved by the supplied images.
+
+| Region | Physical range |
 | --- | --- |
 | Bootloader | `0x000000-0x030000` |
 | Config | `0x030000-0x040000` |
@@ -69,26 +81,86 @@ Argon default; no first-boot script forces a theme after that.
 | Firmware | `0x050000-0xF50000` |
 | Storage | `0xF50000-0x1000000` |
 
-**Never erase Factory.** Recovery and sysupgrade are designed to target the
-firmware range only.
+The recovery image is exactly `0xF00000` bytes and maps only to Firmware. It
+places the `DE AD C0 DE` `rootfs_data` marker after SquashFS and pads the
+remaining firmware space with `FF`; it does not cover Bootloader, Config,
+Factory, or Storage.
 
-## Installation and upgrades
+## Upgrade
 
-- First install or recovery: see [INSTALL.md](docs/INSTALL.md).
-- WPS/TFTP recovery details: see [RECOVERY.md](docs/RECOVERY.md).
-- Normal OpenWrt upgrades: see [SYSUPGRADE.md](docs/SYSUPGRADE.md).
-- Hardware and SPI-NOR technical notes: see [HARDWARE.md](docs/HARDWARE.md).
+- First install or recovery: use `meizu_r18.bin` with the documented
+  [WPS/TFTP recovery procedure](docs/RECOVERY.md).
+- Normal upgrade: use the `*-squashfs-sysupgrade.bin` image and validate it
+  before writing:
 
-## Healthcheck
+  ```sh
+  sysupgrade -T /tmp/openwrt-ramips-mt76x8-meizu_r18-squashfs-sysupgrade.bin
+  sysupgrade /tmp/openwrt-ramips-mt76x8-meizu_r18-squashfs-sysupgrade.bin
+  ```
 
-Run `r18-healthcheck` over SSH or from LuCI's terminal. It is diagnostic and
-read-only; a WAN warning is expected when P4 has no upstream cable.
+- Clean upgrade: use `sysupgrade -n` with the same sysupgrade image.
 
-## Known limitations
+Do not use a recovery image as a sysupgrade image. See
+[SYSUPGRADE.md](docs/SYSUPGRADE.md) for safety notes. Stage 3.5 keep-settings
+and clean-upgrade paths were hardware-validated; RC5 additionally packages the
+LuCI keep rule and Argon ROM default for its RC5-to-RC5 validation path.
 
-- WAN upstream DHCP / Internet physical validation is pending.
-- OpenWrt runtime WPS button support is deferred / not yet validated.
-- Reset GPIO43 polarity is unverified.
-- Power LED GPIO4 polarity is unverified.
-- Chassis LAN/WAN/Wi-Fi LED mappings are unverified.
-- Startup timing has not been aggressively optimized.
+## Hardware status
+
+### Confirmed
+
+- S25FL128S1 dedicated 256-byte page-size fix and clean JFFS2 first/second
+  boot behavior
+- Recovery format, firmware boundary protection, marker, and FF padding
+- LAN1/LAN2 mapping, WAN P4 configuration, and real-upstream WAN connectivity
+- 2.4 GHz and MT7662 5 GHz operation, including VHT80
+- LuCI, Chinese language default, Argon/Bootstrap themes, and the public Wi-Fi
+  defaults
+- `r18-net-rescue` retained for manual use and disabled from automatic start
+
+### Deferred
+
+- **LEDs:** GPIO number, polarity, and chassis wiring are not all confirmed.
+- **Reset:** GPIO43 is a candidate, but its electrical polarity is unknown.
+- **WPS:** the runtime GPIO is unknown; OpenWrt runtime WPS is not enabled.
+
+No `gpio-keys` or `gpio-leds` node is added until those electrical mappings are
+verified. The separate bootloader WPS/TFTP recovery procedure is unaffected.
+
+## Tools
+
+Run `r18-healthcheck` over SSH or from LuCI's terminal for read-only
+diagnostics. It checks SPI NOR identity and page size, JFFS2 messages, network,
+Wi-Fi, and rescue-service state. It does not write MTD, alter SPI NOR,
+restart networking, or reboot the router.
+
+## Build
+
+The GitHub Actions workflow builds OpenWrt 25.12.5 / Linux 6.12.94 and verifies
+the Stage 2.4 SPI NOR patch, sysupgrade metadata, final rootfs defaults,
+recovery structure, checksums, and artifacts. Compiler and download caches are
+used without caching build output directories.
+
+## Release
+
+**v0.4.0-rc5** is a Release Candidate. Its published build identity is:
+
+- Stage 4 / Release Candidate
+- Argon ROM default; Argon and Bootstrap installed
+- S25FL128S1 page-size fix: 256 bytes
+- Network rescue autostart: disabled
+
+## Known issues
+
+- LED integration is deferred pending confirmed GPIO, polarity, and wiring.
+- Reset-button integration is deferred pending GPIO43 polarity confirmation.
+- Runtime WPS integration is deferred pending GPIO identification.
+
+## Roadmap
+
+Stage 5 focuses on:
+
+- LED adaptation after electrical verification
+- Reset-button evaluation
+- Additional packages
+- Boot-time optimization
